@@ -1,9 +1,9 @@
 {
   "version": 2,
   "name": "solana-token-creation-platform",
-  "buildCommand": "npm run vercel-build",
+  "buildCommand": "npm install --legacy-peer-deps && cd client && npm install --legacy-peer-deps && npm run build",
   "outputDirectory": "client/build",
-  "installCommand": "npm run install-all",
+  "installCommand": "npm install --legacy-peer-deps",
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
