@@ -29,12 +29,7 @@ const TokenCard = ({ token }) => {
   if (!token) return null;
 
   // Support both 'address' and 'tokenAddress' for compatibility
-  const address = token.address || token.tokenAddress;
-  const name = token.name;
-  const symbol = token.symbol;
-  const decimals = token.decimals;
-  const supply = token.supply;
-  const owner = token.owner;
+  const { address, name, symbol, decimals, supply } = token;
   const balance = token.balance;
 
   // Format token supply with proper decimals

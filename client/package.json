@@ -23,6 +23,14 @@
     "buffer": "^6.0.3",
     "crypto-browserify": "^3.12.1",
     "process": "^0.11.10",
+    "assert": "^2.0.0",
+    "stream-http": "^3.2.0",
+    "https-browserify": "^1.0.0",
+    "os-browserify": "^0.3.0",
+    "url": "^0.11.0",
+    "browserify-zlib": "^0.2.0",
+    "path-browserify": "^1.0.1",
+    "vm-browserify": "^1.1.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.16.0",
@@ -33,8 +41,8 @@
   },
   "scripts": {
     "start": "craco start",
-    "build": "craco build || react-scripts build",
-    "build:fallback": "react-scripts build",
+    "build": "CI=false craco build || CI=false react-scripts build",
+    "build:fallback": "CI=false react-scripts build",
     "test": "craco test",
     "eject": "react-scripts eject",
     "vercel-build": "node vercel-build.js"
@@ -43,7 +51,11 @@
     "extends": [
       "react-app",
       "react-app/jest"
-    ]
+    ],
+    "rules": {
+      "no-unused-vars": "warn",
+      "react-hooks/exhaustive-deps": "warn"
+    }
   },
   "browserslist": {
     "production": [

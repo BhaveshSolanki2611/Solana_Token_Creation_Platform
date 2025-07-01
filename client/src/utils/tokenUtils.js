@@ -1,6 +1,6 @@
+import { Connection, PublicKey, Transaction, clusterApiUrl } from '@solana/web3.js';
 import axios from 'axios';
-import { PublicKey } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from '@solana/spl-token';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 
 /**
  * Create a new SPL token

@@ -43,7 +43,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { useConnection, useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import axios from 'axios';
-import { Transaction, Keypair, PublicKey } from '@solana/web3.js';
+import { Transaction, Keypair } from '@solana/web3.js';
 
 // Token creation steps
 const steps = ['Connect Wallet', 'Token Details', 'Social & Metadata', 'Review & Deploy'];
@@ -78,7 +78,6 @@ const CreateToken = () => {
     discord: '',
   });
   const [advancedMode, setAdvancedMode] = useState(false);
-  const [createdToken, setCreatedToken] = useState(null);
 
   // Update owner wallet when wallet connects
   useEffect(() => {
@@ -216,7 +215,6 @@ const CreateToken = () => {
       }
 
       setSuccess(`Token created successfully! Signature: ${signature}`);
-      setCreatedToken({ tokenAddress: mintAddress });
 
       // 8. Navigate to the new token's page after a delay
       setTimeout(() => {

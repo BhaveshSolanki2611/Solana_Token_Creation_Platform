@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react';
-import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
@@ -81,7 +80,7 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
     const intervalId = setInterval(updateBalance, 30000); // Every 30 seconds
     
     return () => clearInterval(intervalId);
-  }, [connected, publicKey, network]);
+  }, [connected, publicKey, network, getWalletBalance]);
 
   // Function to request SOL airdrop (devnet only)
   const requestAirdrop = async (amount = 1) => {
@@ -162,7 +161,7 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
         window.solana.off('disconnect');
       }
     };
-  }, []);
+  }, [getWalletBalance]);
 
   // Context value
   const value = {
