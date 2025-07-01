@@ -1,7 +1,7 @@
 {
   "version": 2,
   "name": "solana-token-creation-platform",
-  "buildCommand": "npm install --legacy-peer-deps && cd client && npm install --legacy-peer-deps && CI=false npm run build",
+  "buildCommand": "npm install --legacy-peer-deps && cd client && npm install --legacy-peer-deps crypto-browserify && CI=false npm run build",
   "outputDirectory": "client/build",
   "installCommand": "npm install --legacy-peer-deps",
   "functions": {
@@ -22,7 +22,8 @@
   ],
   "env": {
     "NODE_ENV": "production",
-    "CI": "false"
+    "CI": "false",
+    "GENERATE_SOURCEMAP": "false"
   },
   "regions": ["iad1"]
 }

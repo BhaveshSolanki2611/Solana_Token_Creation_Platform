@@ -1,5 +1,17 @@
 # Vercel Deployment Fixes Summary
 
+## Latest Fixes (Updated)
+
+### 1. Fixed `setTransferData is not defined` error
+- Added back the missing transferData state in TokenDashboard.js
+- Ensured all state variables are properly defined before use
+
+### 2. Enhanced Crypto Module Resolution
+- Added a dedicated webpack-crypto-fix.js to polyfill crypto globally
+- Updated craco.config.js to provide crypto through webpack's ProvidePlugin
+- Modified vercel-build.js to ensure crypto-browserify is properly installed
+- Updated vercel.json to include crypto-browserify in the build command
+
 ## Issues Fixed
 
 ### 1. ❌ Original Error: "The `functions` property cannot be used in conjunction with the `builds` property"
@@ -173,9 +185,9 @@ The application functionality remains completely intact while fixing all deploym
    - Solution: Set CI=false in build scripts and environment variables
 
 2. The crypto module resolution error was happening because the `@toruslabs/eccrypto` package needs the Node.js crypto module.
-   - Solution: Ensured proper polyfilling with crypto-browserify
+   - Solution: Enhanced crypto-browserify polyfill implementation with a global shim
 
-3. Several components had unused imports and variables that were causing ESLint warnings.
-   - Solution: Cleaned up all unused code while maintaining functionality
+3. Several components had undefined variables after our cleanup.
+   - Solution: Added back necessary state variables that were mistakenly removed
 
 These changes ensure the application builds properly on Vercel without changing any core functionality.

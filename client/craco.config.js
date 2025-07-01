@@ -6,7 +6,7 @@ module.exports = {
       // Ignore source map warnings from node_modules
       webpackConfig.ignoreWarnings = [/Failed to parse source map/];
 
-      // Add fallbacks for node core modules
+      // Add fallbacks for node core modules - make sure crypto is properly polyfilled
       webpackConfig.resolve = webpackConfig.resolve || {};
       webpackConfig.resolve.fallback = {
         ...webpackConfig.resolve.fallback,
@@ -33,6 +33,7 @@ module.exports = {
         new webpack.ProvidePlugin({
           Buffer: ['buffer', 'Buffer'],
           process: 'process/browser.js',
+          crypto: 'crypto-browserify',
         }),
       ];
       

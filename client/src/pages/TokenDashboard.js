@@ -228,6 +228,7 @@ const TokenDashboard = () => {
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [mintDialogOpen, setMintDialogOpen] = useState(false);
   const [burnDialogOpen, setBurnDialogOpen] = useState(false);
+  const [transferData, setTransferData] = useState({ recipient: '', amount: '' });
   const [mintData, setMintData] = useState({ amount: '', recipient: '' });
   const [burnData, setBurnData] = useState({ amount: '' });
   const { setVisible } = useWalletModal();
