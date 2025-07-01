@@ -1,39 +1,27 @@
 {
   "version": 2,
   "name": "solana-token-creation-platform",
-  "builds": [
-    {
-      "src": "server/index.js",
-      "use": "@vercel/node",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
-    },
-    {
-      "src": "client/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "build",
-        "installCommand": "npm install --legacy-peer-deps"
-      }
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "client/build",
+  "installCommand": "npm run install-all",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30,
+      "memory": 1024
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "server/index.js"
+      "source": "/api/(.*)",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/(.*)",
-      "dest": "client/build/$1"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
   "env": {
     "NODE_ENV": "production"
   },
-  "functions": {
-    "server/index.js": {
-      "maxDuration": 30
-    }
-  }
+  "regions": ["iad1"]
 }

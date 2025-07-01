@@ -14,10 +14,10 @@
     "build": "node build.js",
     "build:prod": "node scripts/production-build.js",
     "heroku-postbuild": "NPM_CONFIG_PRODUCTION=false npm run install-client && npm run build",
-    "vercel-build": "npm run build"
+    "vercel-build": "npm run install-all && cd client && npm run build"
   },
   "engines": {
-    "node": "18.x"
+    "node": ">=18.x"
   },
   "keywords": [
     "solana",

@@ -56,8 +56,15 @@ export const tokenAPI = {
    * @param {string} network - Solana network (optional)
    * @returns {Promise<Array>} - List of tokens
    */
-  getWalletTokens: (walletAddress, network) => 
-    api.get(`/api/tokens/wallet/${walletAddress}${network ? `?network=${network}` : ''}`),
+  getWalletTokens: (walletAddress, network) =>
+    api.get(`/api/tokens/owner/${walletAddress}${network ? `?network=${network}` : ''}`),
+  
+  /**
+   * Transfer tokens
+   * @param {Object} transferData - Transfer data
+   * @returns {Promise<Object>} - Transaction result
+   */
+  transferTokens: (transferData) => api.post('/api/tokens/transfer', transferData),
   
   /**
    * Mint additional tokens
@@ -65,6 +72,44 @@ export const tokenAPI = {
    * @returns {Promise<Object>} - Transaction result
    */
   mintTokens: (mintData) => api.post('/api/tokens/mint', mintData),
+  
+  /**
+   * Burn tokens
+   * @param {Object} burnData - Burn data
+   * @returns {Promise<Object>} - Transaction result
+   */
+  burnTokens: (burnData) => api.post('/api/tokens/burn', burnData),
+  
+  /**
+   * Get token holders
+   * @param {string} tokenAddress - Token mint address
+   * @param {string} network - Solana network (optional)
+   * @returns {Promise<Object>} - Token holders data
+   */
+  getTokenHolders: (tokenAddress, network) =>
+    api.get(`/api/tokens/${tokenAddress}/holders${network ? `?network=${network}` : ''}`),
+  
+  /**
+   * Get token transactions
+   * @param {string} tokenAddress - Token mint address
+   * @param {string} network - Solana network (optional)
+   * @param {number} page - Page number (optional)
+   * @param {number} limit - Items per page (optional)
+   * @returns {Promise<Object>} - Token transactions data
+   */
+  getTokenTransactions: (tokenAddress, network, page = 1, limit = 20) =>
+    api.get(`/api/tokens/${tokenAddress}/transactions?${new URLSearchParams({
+      ...(network && { network }),
+      page: page.toString(),
+      limit: limit.toString()
+    })}`),
+  
+  /**
+   * Confirm transaction
+   * @param {Object} confirmData - Transaction confirmation data
+   * @returns {Promise<Object>} - Confirmation result
+   */
+  confirmTransaction: (confirmData) => api.post('/api/tokens/transactions/confirm', confirmData),
 };
 
 // Wallet API endpoints
