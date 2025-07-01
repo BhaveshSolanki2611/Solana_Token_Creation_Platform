@@ -1,6 +1,11 @@
-// Import crypto polyfill first to ensure it's available globally
-import './webpack-crypto-fix';
+// Import buffer and process polyfills first
+import 'buffer';
+import 'process/browser';
 
+// Then our custom polyfills
+import './polyfill';
+
+// React imports
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';

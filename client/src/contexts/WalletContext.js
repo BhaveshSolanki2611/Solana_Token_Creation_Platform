@@ -3,7 +3,6 @@ import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@sol
 import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
-  TorusWalletAdapter,
   LedgerWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
 import { WalletModalProvider, useWalletModal } from '@solana/wallet-adapter-react-ui';
@@ -201,12 +200,11 @@ export const WalletProvider = ({ children }) => {
     }
   }, [network]);
 
-  // Configure wallet adapters
+  // Configure wallet adapters - removed TorusWalletAdapter to prevent crypto issues
   const wallets = React.useMemo(
     () => [
       new PhantomWalletAdapter(),
       new SolflareWalletAdapter(),
-      new TorusWalletAdapter(),
       new LedgerWalletAdapter(),
     ],
     []

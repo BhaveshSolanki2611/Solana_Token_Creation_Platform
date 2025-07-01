@@ -27,13 +27,19 @@ module.exports = {
         vm: require.resolve('vm-browserify'),
       };
 
+      // Add aliases to help resolve crypto modules
+      webpackConfig.resolve.alias = {
+        ...webpackConfig.resolve.alias,
+        // Point crypto imports to crypto-browserify
+        crypto: require.resolve('crypto-browserify'),
+      };
+
       // Add plugins for Buffer and process
       webpackConfig.plugins = [
         ...(webpackConfig.plugins || []),
         new webpack.ProvidePlugin({
           Buffer: ['buffer', 'Buffer'],
           process: 'process/browser.js',
-          crypto: 'crypto-browserify',
         }),
       ];
       
