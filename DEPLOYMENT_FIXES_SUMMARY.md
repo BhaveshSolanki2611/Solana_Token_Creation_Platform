@@ -1,50 +1,43 @@
-# Deployment Fixes Summary
+# Vercel Deployment Fixes Summary
 
-## Latest Fixes (Updated)
+## Issues Fixed
 
-### 1. Fixed Crypto Module Error by Removing Problematic Dependencies
-- Removed TorusWalletAdapter which was causing crypto module errors
-- Simplified wallet adapter configuration to use only compatible adapters
-- Replaced the problematic window.crypto override approach with proper polyfills
+### 1. ❌ Original Error: "The `functions` property cannot be used in conjunction with the `builds` property"
 
-### 2. Fixed `setTransferData is not defined` error
-- Added back the missing transferData state in TokenDashboard.js
-- Ensured all state variables are properly defined before use
+**Root Cause**: The `vercel.json` configuration was using both legacy `builds` and modern `functions` properties simultaneously, which is not allowed.
 
-### 3. Added Proper Polyfill Approach
-- Created a safer polyfill.js that only adds Buffer and process
-- Updated index.js to import polyfills in the correct order
-- Modified craco config to use aliases instead of ProvidePlugin for crypto
+**Fix Applied**:
+- ✅ Removed the `builds` property entirely
+- ✅ Updated to use modern Vercel configuration with `functions` only
+- ✅ Created proper serverless function structure
 
-## Previous Fixes
+### 2. ❌ API Route Structure Issues
 
-### 1. ESLint Warning/Error Issues
-- Removed unused imports and variables in various components:
-  - TokenCard.js - Removed unused 'owner' variable
-  - TokenTransferDialog.js - Removed unused imports
-  - WalletContext.js - Added missing dependencies to React hooks
-  - CreateToken.js - Removed unused PublicKey import and createdToken state
-  - TokenDashboard.js - Removed multiple unused variables and functions
-  - TokenDetails.js - Removed unused imports and functions
-  - tokenUtils.js - Removed unused TOKEN_PROGRAM_ID import
+**Root Cause**: Server was in subdirectory which doesn't align with Vercel's serverless function expectations.
 
-### 2. Build Configuration
-- Updated package.json build scripts to include CI=false flag
-- Updated vercel.json with proper configuration for deployment
-- Ensured all necessary polyfills are available for browser builds
+**Fix Applied**:
+- ✅ Created `/api/index.js` as the main serverless function entry point
+- ✅ Updated routing to properly handle `/api/*` requests
+- ✅ Maintained all existing server functionality through imports
 
-## Implementation Details
+### 3. ❌ Build Process Configuration
 
-1. The primary issue was the Torus Wallet Adapter trying to use Node.js crypto module in a browser environment.
-   - Solution: Removed TorusWalletAdapter completely to avoid the crypto compatibility issues
+**Root Cause**: Build commands and output directories were not properly configured for Vercel.
 
-2. The window.crypto is read-only in modern browsers and cannot be directly set.
-   - Solution: Used proper polyfill approach without trying to override window.crypto
+**Fix Applied**:
+- ✅ Updated `buildCommand` to use `npm run vercel-build`
+- ✅ Set correct `outputDirectory` to `client/build`
+- ✅ Fixed `installCommand` to install all dependencies
+- ✅ Updated Node.js engine requirement to `>=18.x`
 
-3. Several components had undefined variables after our cleanup.
-   - Solution: Added back necessary state variables that were mistakenly removed
+### 4. ❌ Client API Endpoint Mismatches
 
-These changes ensure the application builds and runs properly on Vercel without changing any core functionality.
+**Root Cause**: Client was calling incorrect API endpoints that didn't exist on the server.
+
+**Fix Applied**:
+- ✅ Fixed `/api/tokens/wallet/` to `/api/tokens/owner/` in client service
+- ✅ Added missing API endpoints to client service (transfer, burn, holders, transactions, etc.)
+- ✅ Improved error handling and timeout configuration
 
 ## Files Modified
 

@@ -41,8 +41,8 @@
   },
   "scripts": {
     "start": "craco start",
-    "build": "CI=false craco build || CI=false react-scripts build",
-    "build:fallback": "CI=false react-scripts build",
+    "build": "craco build || react-scripts build",
+    "build:fallback": "react-scripts build",
     "test": "craco test",
     "eject": "react-scripts eject",
     "vercel-build": "node vercel-build.js"

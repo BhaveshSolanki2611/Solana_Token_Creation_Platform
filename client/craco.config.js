@@ -6,7 +6,7 @@ module.exports = {
       // Ignore source map warnings from node_modules
       webpackConfig.ignoreWarnings = [/Failed to parse source map/];
 
-      // Add fallbacks for node core modules - make sure crypto is properly polyfilled
+      // Add fallbacks for node core modules
       webpackConfig.resolve = webpackConfig.resolve || {};
       webpackConfig.resolve.fallback = {
         ...webpackConfig.resolve.fallback,
@@ -25,13 +25,6 @@ module.exports = {
         net: false,
         tls: false,
         vm: require.resolve('vm-browserify'),
-      };
-
-      // Add aliases to help resolve crypto modules
-      webpackConfig.resolve.alias = {
-        ...webpackConfig.resolve.alias,
-        // Point crypto imports to crypto-browserify
-        crypto: require.resolve('crypto-browserify'),
       };
 
       // Add plugins for Buffer and process

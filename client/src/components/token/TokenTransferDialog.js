@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -13,7 +13,8 @@ import {
   InputAdornment,
 } from '@mui/material';
 import { isValidSolanaAddress } from '../../utils/walletUtils';
-import { formatTokenAmount } from '../../utils/tokenUtils';
+import { formatTokenAmount, parseTokenAmount } from '../../utils/tokenUtils';
+import { useWallet } from '../../contexts/WalletContext';
 
 /**
  * TokenTransferDialog component for transferring tokens
@@ -30,6 +31,17 @@ const TokenTransferDialog = ({ open, onClose, onTransfer, token }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
+
+  useEffect(() => {
+    if (!open) {
+      // Reset form when dialog closes
+      setRecipient('');
+      setAmount('');
+      setError('');
+      setLoading(false);
+      setValidationErrors({});
+    }
+  }, [open]);
 
   // Validate form
   const validateForm = () => {

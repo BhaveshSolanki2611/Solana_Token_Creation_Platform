@@ -34,6 +34,7 @@ import {
   LocalFireDepartment as BurnIcon,
   AccountBalance as MintIcon,
   Refresh as RefreshIcon,
+  FilterList as FilterIcon,
   AccountBalanceWallet as AccountBalanceWalletIcon,
   AddCircleOutline as AddCircleOutlineIcon,
 } from '@mui/icons-material';
@@ -47,6 +48,9 @@ import { getAssociatedTokenAccount } from '../utils/tokenUtils';
 import { Connection } from '@solana/web3.js';
 
 // Components
+import TokenList from '../components/token/TokenList';
+import ConnectWallet from '../components/common/ConnectWallet';
+import PageHeader from '../components/common/PageHeader';
 import TokenTransferDialog from '../components/token/TokenTransferDialog';
 import TokenMintDialog from '../components/token/TokenMintDialog';
 import TokenBurnDialog from '../components/token/TokenBurnDialog';
@@ -216,10 +220,9 @@ const TokenDashboard = () => {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [selectedToken, setSelectedToken] = useState(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogType, setDialogType] = useState(null);
+  const [actionDialog, setActionDialog] = useState({ open: false, type: '', token: null });
   const [anchorEl, setAnchorEl] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [filteredTokens, setFilteredTokens] = useState([]);
@@ -297,16 +300,16 @@ const TokenDashboard = () => {
 
   // Filter tokens based on search query
   const handleSearch = (e) => {
-    const searchQuery = e.target.value;
-    setSearchQuery(searchQuery);
+    const searchTerm = e.target.value;
+    setSearchTerm(searchTerm);
     
-    if (searchQuery.trim() === '') {
+    if (searchTerm.trim() === '') {
       setFilteredTokens(tokens);
     } else {
       const filtered = tokens.filter(token => 
-        token.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        token.symbol?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        token.address?.toLowerCase().includes(searchQuery.toLowerCase())
+        token.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        token.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        token.address?.toLowerCase().includes(searchTerm.toLowerCase())
       );
       setFilteredTokens(filtered);
     }
@@ -378,6 +381,20 @@ const TokenDashboard = () => {
   // Handle wallet connection
   const handleConnectWallet = () => {
     setVisible(true);
+  };
+
+  // Handle search input change
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  // Format token supply with decimals
+  const formatTokenSupply = (supply, decimals) => {
+    if (!supply) return '0';
+    const divisor = Math.pow(10, decimals);
+    return (supply / divisor).toLocaleString('en-US', {
+      maximumFractionDigits: decimals,
+    });
   };
 
   // Handle mint submission
@@ -515,6 +532,111 @@ const TokenDashboard = () => {
     }
   };
 
+  // Render wallet connection prompt
+  const renderWalletPrompt = () => (
+    <Paper sx={{ p: 4, textAlign: 'center', mt: 4 }}>
+      <AccountBalanceWalletIcon sx={{ fontSize: 60, color: 'primary.main', mb: 2 }} />
+      <Typography variant="h5" gutterBottom>
+        Connect Your Wallet
+      </Typography>
+      <Typography variant="body1" paragraph>
+        Connect your Solana wallet to view your tokens and manage them.
+      </Typography>
+      <Button
+        variant="contained"
+        color="primary"
+        onClick={handleConnectWallet}
+        sx={{ mt: 2 }}
+      >
+        Connect Wallet
+      </Button>
+    </Paper>
+  );
+
+  // Render token cards
+  const renderTokenCards = () => {
+    if (loading) {
+      return (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+          <CircularProgress />
+        </Box>
+      );
+    }
+
+    if (error) {
+      return (
+        <Alert severity="error" sx={{ mt: 4 }}>
+          {error}
+        </Alert>
+      );
+    }
+
+    if (filteredTokens.length === 0) {
+      return (
+        <Paper sx={{ p: 4, textAlign: 'center', mt: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            No Tokens Found
+          </Typography>
+          <Typography variant="body1" paragraph>
+            {searchTerm.trim() !== '' 
+              ? 'No tokens match your search criteria.'
+              : 'You haven\'t created any tokens yet.'}
+          </Typography>
+          <Button
+            component={Link}
+            to="/create-token"
+            variant="contained"
+            color="primary"
+            startIcon={<AddCircleOutlineIcon />}
+            sx={{ mt: 2 }}
+          >
+            Create New Token
+          </Button>
+        </Paper>
+      );
+    }
+
+    return (
+      <Grid container spacing={3} sx={{ mt: 2 }}>
+        {filteredTokens.map((token) => (
+          <Grid item xs={12} sm={6} md={4} key={token.address || token.tokenAddress}>
+            <TokenCard 
+              token={{ ...token, address: token.address || token.tokenAddress, balance: token.balance }} 
+              onMenuClick={handleMenuClick}
+              onAction={handleTokenAction}
+            />
+          </Grid>
+        ))}
+      </Grid>
+    );
+  };
+
+  // Defensive dialog openers
+  const handleTransfer = (token) => {
+    if (!token || token.decimals == null) {
+      alert('Token mint info is missing. Please try again later.');
+      return;
+    }
+    setSelectedToken(token);
+    setTransferDialogOpen(true);
+  };
+  const handleMint = (token) => {
+    if (!token || token.decimals == null) {
+      alert('Token mint info is missing. Please try again later.');
+      return;
+    }
+    setSelectedToken(token);
+    setMintDialogOpen(true);
+  };
+  const handleBurn = (token) => {
+    if (!token || token.decimals == null) {
+      alert('Token mint info is missing. Please try again later.');
+      return;
+    }
+    setSelectedToken(token);
+    setBurnDialogOpen(true);
+  };
+
   return (
     <Container maxWidth="lg">
       <Box sx={{ mt: 4, mb: 4 }}>
@@ -560,7 +682,7 @@ const TokenDashboard = () => {
               <TextField
                 fullWidth
                 placeholder="Search tokens by name, symbol, or address..."
-                value={searchQuery}
+                value={searchTerm}
                 onChange={handleSearch}
                 InputProps={{
                   startAdornment: (
@@ -595,14 +717,14 @@ const TokenDashboard = () => {
               <Paper sx={{ p: 4, textAlign: 'center' }}>
                 <TokenIcon sx={{ fontSize: 80, color: 'text.secondary', mb: 2 }} />
                 <Typography variant="h6" gutterBottom>
-                  {searchQuery ? 'No Tokens Found' : 'No Tokens Yet'}
+                  {searchTerm ? 'No Tokens Found' : 'No Tokens Yet'}
                 </Typography>
                 <Typography variant="body1" color="text.secondary" paragraph>
-                  {searchQuery
+                  {searchTerm
                     ? 'No tokens match your search criteria. Try adjusting your search terms.'
                     : 'You haven\'t created any tokens yet. Create your first token to get started!'}
                 </Typography>
-                {!searchQuery && (
+                {!searchTerm && (
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}

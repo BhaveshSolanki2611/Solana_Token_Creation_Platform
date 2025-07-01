@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react';
+import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
+  TorusWalletAdapter,
   LedgerWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
 import { WalletModalProvider, useWalletModal } from '@solana/wallet-adapter-react-ui';
@@ -79,7 +81,7 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
     const intervalId = setInterval(updateBalance, 30000); // Every 30 seconds
     
     return () => clearInterval(intervalId);
-  }, [connected, publicKey, network, getWalletBalance]);
+  }, [connected, publicKey, network]);
 
   // Function to request SOL airdrop (devnet only)
   const requestAirdrop = async (amount = 1) => {
@@ -160,7 +162,7 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
         window.solana.off('disconnect');
       }
     };
-  }, [getWalletBalance]);
+  }, []);
 
   // Context value
   const value = {
@@ -200,11 +202,12 @@ export const WalletProvider = ({ children }) => {
     }
   }, [network]);
 
-  // Configure wallet adapters - removed TorusWalletAdapter to prevent crypto issues
+  // Configure wallet adapters
   const wallets = React.useMemo(
     () => [
       new PhantomWalletAdapter(),
       new SolflareWalletAdapter(),
+      new TorusWalletAdapter(),
       new LedgerWalletAdapter(),
     ],
     []

@@ -11,9 +11,11 @@ import {
   Button,
   Chip,
   Avatar,
+  Divider,
   List,
   ListItem,
   ListItemText,
+  ListItemAvatar,
   IconButton,
   Tooltip,
   Alert,
@@ -42,6 +44,9 @@ import {
   LocalFireDepartment as BurnIcon,
   Add as MintIcon,
   Refresh as RefreshIcon,
+  AccountBalanceWallet as WalletIcon,
+  TrendingUp as TrendingUpIcon,
+  Info as InfoIcon,
   Language as WebsiteIcon,
   Twitter as TwitterIcon,
   Telegram as TelegramIcon,
@@ -51,7 +56,7 @@ import {
   Home as HomeIcon
 } from '@mui/icons-material';
 import { useWallet } from '../contexts/WalletContext';
-import { getAssociatedTokenAccount } from '../utils/tokenUtils';
+import { mintTokens, burnTokens, getAssociatedTokenAccount, getTokenInfo } from '../utils/tokenUtils';
 import axios from 'axios';
 import { Transaction, Connection } from '@solana/web3.js';
 import { clusterApiUrl } from '@solana/web3.js';
@@ -90,7 +95,7 @@ const TokenDetails = () => {
       fetchUserTokenBalance();
       fetchTransactionHistory();
     }
-  }, [address, publicKey, network]);
+  }, [address, publicKey]);
 
   const fetchTokenDetails = async () => {
     try {
@@ -1047,6 +1052,15 @@ const TokenDetails = () => {
                           case 'burn': return <BurnIcon fontSize="small" />;
                           case 'transfer': return <TransferIcon fontSize="small" />;
                           default: return <HistoryIcon fontSize="small" />;
+                        }
+                      };
+
+                      const getTypeColor = (type) => {
+                        switch (type) {
+                          case 'mint': return 'success';
+                          case 'burn': return 'error';
+                          case 'transfer': return 'primary';
+                          default: return 'default';
                         }
                       };
 
