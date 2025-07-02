@@ -58,8 +58,20 @@ router.post(
     const { network = 'devnet' } = req.body;
 
     try {
+      console.log('Token creation request received:', {
+        name: req.body.name,
+        symbol: req.body.symbol,
+        decimals: req.body.decimals,
+        supply: req.body.supply,
+        ownerWallet: req.body.ownerWallet,
+        network: network
+      });
+
       const connection = getConnection(network);
+      console.log('Solana connection established for network:', network);
+      
       const preparedData = await prepareCreateTokenTransaction({ ...req.body, network }, connection);
+      console.log('Token transaction prepared successfully:', preparedData.mintAddress);
 
       // Database operations using safe wrapper - run in background
       const dbOperations = async () => {
@@ -118,8 +130,38 @@ router.post(
       // Return the prepared transaction data immediately
       res.json(preparedData);
     } catch (error) {
-      console.error('Error preparing token creation:', error);
-      res.status(500).json({ error: error.message || 'Server error' });
+      console.error('Error preparing token creation - Full error:', error);
+      console.error('Error stack:', error.stack);
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      
+      // Provide more specific error messages based on error type
+      let errorMessage = 'Failed to prepare token creation';
+      let statusCode = 500;
+      
+      if (error.message.includes('Invalid public key')) {
+        errorMessage = 'Invalid wallet address provided';
+        statusCode = 400;
+      } else if (error.message.includes('Network request failed') || error.message.includes('fetch')) {
+        errorMessage = 'Solana network connection failed';
+        statusCode = 503;
+      } else if (error.message.includes('Insufficient funds')) {
+        errorMessage = 'Insufficient SOL balance for token creation';
+        statusCode = 400;
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Request timeout - please try again';
+        statusCode = 408;
+      } else if (error.message.includes('validation')) {
+        errorMessage = 'Invalid input parameters';
+        statusCode = 400;
+      }
+      
+      res.status(statusCode).json({
+        error: errorMessage,
+        details: error.message,
+        type: error.name || 'UnknownError',
+        timestamp: new Date().toISOString()
+      });
     }
   }
 );

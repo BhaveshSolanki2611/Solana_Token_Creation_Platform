@@ -1,7 +1,6 @@
 const { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram } = require('@solana/web3.js');
-const { 
-  Token, 
-  TOKEN_PROGRAM_ID, 
+const {
+  TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   createInitializeMintInstruction,
   createAssociatedTokenAccountInstruction,
@@ -14,28 +13,9 @@ const {
   MINT_SIZE,
   getMinimumBalanceForRentExemptMint
 } = require('@solana/spl-token');
+const { getConnection } = require('./networkUtils');
 const bs58 = require('bs58');
 const cache = require('memory-cache');
-
-// Initialize Solana connection
-const getConnection = (network) => {
-  let endpoint;
-  
-  if (network === 'mainnet-beta') {
-    endpoint = process.env.SOLANA_MAINNET_URL || 'https://api.mainnet-beta.solana.com';
-  } else if (network === 'testnet') {
-    endpoint = process.env.SOLANA_TESTNET_URL || 'https://api.testnet.solana.com';
-  } else {
-    endpoint = process.env.SOLANA_DEVNET_URL || 'https://api.devnet.solana.com';
-  }
-  
-  try {
-  return new Connection(endpoint, 'confirmed');
-  } catch (error) {
-    console.error('Failed to create Solana connection:', error);
-    throw new Error('Could not connect to Solana network');
-  }
-};
 
 /**
  * Prepares a transaction to create a new SPL token.
@@ -59,23 +39,96 @@ const prepareCreateTokenTransaction = async (tokenData, connection) => {
   } = tokenData;
 
   try {
-    // Use the mint public key provided by the frontend
-    const mintPubkey = new PublicKey(mintPublicKey);
-    const ownerPublicKey = new PublicKey(ownerWallet);
-    const mintAuthorityPublicKey = mintAuthority ? new PublicKey(mintAuthority) : ownerPublicKey;
-    const freezeAuthorityPublicKey = freezeAuthority ? new PublicKey(freezeAuthority) : null;
+    console.log('Starting token creation preparation with data:', {
+      name, symbol, decimals, supply, ownerWallet, mintPublicKey
+    });
+
+    // Validate required fields
+    if (!name || !symbol || decimals === undefined || !supply || !ownerWallet || !mintPublicKey) {
+      const missingFields = [];
+      if (!name) missingFields.push('name');
+      if (!symbol) missingFields.push('symbol');
+      if (decimals === undefined) missingFields.push('decimals');
+      if (!supply) missingFields.push('supply');
+      if (!ownerWallet) missingFields.push('ownerWallet');
+      if (!mintPublicKey) missingFields.push('mintPublicKey');
+      throw new Error(`Missing required fields for token creation: ${missingFields.join(', ')}`);
+    }
+
+    // Validate numeric fields
+    if (typeof decimals !== 'number' || decimals < 0 || decimals > 9) {
+      throw new Error(`Decimals must be a number between 0 and 9, received: ${decimals} (type: ${typeof decimals})`);
+    }
+
+    if (typeof supply !== 'number' || supply <= 0) {
+      throw new Error(`Supply must be a positive number, received: ${supply} (type: ${typeof supply})`);
+    }
+
+    // Validate and create public keys with better error handling
+    let mintPubkey, ownerPublicKey, mintAuthorityPublicKey, freezeAuthorityPublicKey;
     
-    const rentExemptBalance = await getMinimumBalanceForRentExemptMint(connection);
+    try {
+      mintPubkey = new PublicKey(mintPublicKey);
+      console.log('Mint public key created:', mintPubkey.toString());
+    } catch (error) {
+      throw new Error(`Invalid mint public key format: ${mintPublicKey}`);
+    }
     
+    try {
+      ownerPublicKey = new PublicKey(ownerWallet);
+      console.log('Owner public key created:', ownerPublicKey.toString());
+    } catch (error) {
+      throw new Error(`Invalid owner wallet address format: ${ownerWallet}`);
+    }
+    
+    try {
+      mintAuthorityPublicKey = mintAuthority ? new PublicKey(mintAuthority) : ownerPublicKey;
+      console.log('Mint authority public key:', mintAuthorityPublicKey.toString());
+    } catch (error) {
+      throw new Error(`Invalid mint authority address format: ${mintAuthority}`);
+    }
+    
+    try {
+      freezeAuthorityPublicKey = freezeAuthority ? new PublicKey(freezeAuthority) : null;
+      if (freezeAuthorityPublicKey) {
+        console.log('Freeze authority public key:', freezeAuthorityPublicKey.toString());
+      }
+    } catch (error) {
+      throw new Error(`Invalid freeze authority address format: ${freezeAuthority}`);
+    }
+    
+    // Get rent exempt balance with retry logic
+    console.log('Getting rent exempt balance for mint...');
+    let rentExemptBalance;
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        rentExemptBalance = await getMinimumBalanceForRentExemptMint(connection);
+        console.log('Rent exempt balance obtained:', rentExemptBalance);
+        break;
+      } catch (error) {
+        retries--;
+        console.error(`Failed to get rent exempt balance, retries left: ${retries}`, error.message);
+        if (retries === 0) {
+          throw new Error(`Failed to get rent exempt balance: ${error.message}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    console.log('Getting associated token address...');
     const associatedTokenAccount = await getAssociatedTokenAddress(
       mintPubkey,
       ownerPublicKey
     );
+    console.log('Associated token account:', associatedTokenAccount.toString());
     
+    console.log('Creating transaction...');
     const transaction = new Transaction({
       feePayer: ownerPublicKey,
     });
 
+    console.log('Adding instructions to transaction...');
     // Instructions to create the token
     transaction.add(
       // Create the mint account
@@ -105,25 +158,60 @@ const prepareCreateTokenTransaction = async (tokenData, connection) => {
         mintPubkey,
         associatedTokenAccount,
         mintAuthorityPublicKey,
-        BigInt(supply * (10 ** decimals))
+        BigInt(Math.floor(supply * (10 ** decimals)))
       )
     );
+    console.log('All instructions added to transaction');
     
+    console.log('Setting dummy blockhash...');
     // Set a dummy blockhash so the client can replace it
     transaction.recentBlockhash = '11111111111111111111111111111111';
+    
+    console.log('Serializing transaction...');
     // Do NOT sign with the mint keypair on the backend
     const serializedTransaction = transaction.serialize({
       requireAllSignatures: false, // It's not fully signed yet
     });
+    console.log('Transaction serialized successfully');
     
-    return {
+    const result = {
       transaction: serializedTransaction.toString('base64'),
       mintAddress: mintPubkey.toString(),
     };
     
+    console.log('Token creation preparation completed successfully:', {
+      mintAddress: result.mintAddress,
+      transactionLength: result.transaction.length
+    });
+    
+    return result;
+    
   } catch (error) {
-    console.error('Error in prepareCreateTokenTransaction:', error);
-    throw error;
+    console.error('Error in prepareCreateTokenTransaction - Full details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      tokenData: { name, symbol, decimals, supply, ownerWallet, mintPublicKey }
+    });
+    
+    // Provide more specific error messages
+    if (error.message.includes('Invalid public key')) {
+      throw new Error(`Invalid wallet address or mint public key format: ${error.message}`);
+    } else if (error.message.includes('Missing required fields')) {
+      throw error;
+    } else if (error.message.includes('Decimals must be')) {
+      throw error;
+    } else if (error.message.includes('Supply must be')) {
+      throw error;
+    } else if (error.message.includes('Network request failed') || error.message.includes('fetch')) {
+      throw new Error(`Solana network connection failed: ${error.message}`);
+    } else if (error.message.includes('rent exempt')) {
+      throw new Error(`Failed to get rent exempt balance: ${error.message}`);
+    } else if (error.message.includes('serialize')) {
+      throw new Error(`Transaction serialization failed: ${error.message}`);
+    } else {
+      throw new Error(`Token creation preparation failed: ${error.message}`);
+    }
   }
 };
 
