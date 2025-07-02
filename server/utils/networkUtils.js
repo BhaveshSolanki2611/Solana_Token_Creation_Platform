@@ -8,6 +8,8 @@ const { Connection, clusterApiUrl } = require('@solana/web3.js');
 const getConnection = (network = 'devnet') => {
   let endpoint;
   
+  console.log(`Creating Solana connection for network: ${network}`);
+  
   // Define alternative RPC endpoints for better reliability
   const ALTERNATIVE_ENDPOINTS = {
     'devnet': [
@@ -38,13 +40,23 @@ const getConnection = (network = 'devnet') => {
     endpoint = clusterApiUrl(network);
   }
   
-  // Create connection with higher commitment and increased timeouts
-  return new Connection(endpoint, {
-    commitment: 'confirmed',
-    confirmTransactionInitialTimeout: 60000, // 60 seconds
-    disableRetryOnRateLimit: false,
-    httpAgent: false // Use default agent with keep-alive
-  });
+  console.log(`Using RPC endpoint: ${endpoint}`);
+  
+  try {
+    // Create connection with higher commitment and increased timeouts
+    const connection = new Connection(endpoint, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 60000, // 60 seconds
+      disableRetryOnRateLimit: false,
+      httpAgent: false // Use default agent with keep-alive
+    });
+    
+    console.log('Solana connection created successfully');
+    return connection;
+  } catch (error) {
+    console.error('Failed to create Solana connection:', error);
+    throw new Error(`Failed to create Solana connection: ${error.message}`);
+  }
 };
 
 module.exports = {

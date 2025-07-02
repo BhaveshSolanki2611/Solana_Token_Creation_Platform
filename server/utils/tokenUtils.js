@@ -103,16 +103,42 @@ const prepareCreateTokenTransaction = async (tokenData, connection) => {
     let retries = 3;
     while (retries > 0) {
       try {
+        // Test connection first
+        console.log('Testing connection to Solana RPC...');
+        const slot = await connection.getSlot();
+        console.log('Connection successful, current slot:', slot);
+        
         rentExemptBalance = await getMinimumBalanceForRentExemptMint(connection);
         console.log('Rent exempt balance obtained:', rentExemptBalance);
         break;
       } catch (error) {
         retries--;
-        console.error(`Failed to get rent exempt balance, retries left: ${retries}`, error.message);
+        console.error(`Failed to get rent exempt balance, retries left: ${retries}`);
+        console.error('Error details:', {
+          name: error.name,
+          message: error.message,
+          code: error.code,
+          cause: error.cause
+        });
+        
         if (retries === 0) {
-          throw new Error(`Failed to get rent exempt balance: ${error.message}`);
+          // Try with a different connection as last resort
+          console.log('Trying with fallback connection...');
+          try {
+            const fallbackConnection = getConnection('devnet');
+            const testSlot = await fallbackConnection.getSlot();
+            console.log('Fallback connection successful, slot:', testSlot);
+            rentExemptBalance = await getMinimumBalanceForRentExemptMint(fallbackConnection);
+            console.log('Rent exempt balance obtained with fallback:', rentExemptBalance);
+            // Update connection reference for subsequent operations
+            connection = fallbackConnection;
+            break;
+          } catch (fallbackError) {
+            console.error('Fallback connection also failed:', fallbackError.message);
+            throw new Error(`Failed to connect to Solana network after multiple attempts. Last error: ${error.message}`);
+          }
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries))); // Exponential backoff
       }
     }
     
