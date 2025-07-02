@@ -157,7 +157,16 @@ const CreateToken = () => {
         freezeAuthority: tokenData.freezeAuthority || null,
         mintPublicKey, // send the mint public key to the backend
         network, // Include the current network
+      }, {
+        timeout: 30000, // 30 second timeout
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
+
+      if (!apiResponse.data || !apiResponse.data.transaction) {
+        throw new Error('Invalid response from server - missing transaction data');
+      }
 
       const { transaction: base64Transaction, mintAddress } = apiResponse.data;
 
@@ -225,7 +234,37 @@ const CreateToken = () => {
 
     } catch (error) {
       console.error('Error creating token:', error);
-      const errorMessage = error.response?.data?.error || error.message || 'Failed to create token. Please try again.';
+      
+      let errorMessage = 'Failed to create token. Please try again.';
+      
+      if (error.response) {
+        // Server responded with error status
+        const status = error.response.status;
+        const serverError = error.response.data?.error;
+        
+        if (status === 500) {
+          errorMessage = serverError || 'Server error occurred. Please try again in a moment.';
+        } else if (status === 408) {
+          errorMessage = 'Request timed out. Please check your connection and try again.';
+        } else if (status === 400) {
+          errorMessage = serverError || 'Invalid request. Please check your input.';
+        } else {
+          errorMessage = serverError || `Server error (${status}). Please try again.`;
+        }
+      } else if (error.request) {
+        // Network error
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (error.message) {
+        // Other errors
+        if (error.message.includes('timeout')) {
+          errorMessage = 'Request timed out. Please try again.';
+        } else if (error.message.includes('Invalid response')) {
+          errorMessage = 'Server returned invalid data. Please try again.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       setError(errorMessage);
     } finally {
       setLoading(false);

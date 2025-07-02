@@ -16,6 +16,7 @@ const { PublicKey } = require('@solana/web3.js');
 const Token = require('../models/Token');
 const TransactionLog = require('../models/TransactionLog');
 const User = require('../models/User');
+const { safeDbOperation } = require('../utils/database');
 
 const router = express.Router();
 
@@ -60,48 +61,61 @@ router.post(
       const connection = getConnection(network);
       const preparedData = await prepareCreateTokenTransaction({ ...req.body, network }, connection);
 
-      // Save token metadata to MongoDB
-      const tokenDoc = new Token({
-        mint: preparedData.mintAddress,
-        name: req.body.name,
-        symbol: req.body.symbol,
-        decimals: req.body.decimals,
-        supply: req.body.supply,
-        owner: req.body.ownerWallet,
-        network: network,
-        mintAuthority: req.body.mintAuthority,
-        freezeAuthority: req.body.freezeAuthority,
-        description: req.body.description,
-        image: req.body.image,
-        website: req.body.website,
-        twitter: req.body.twitter,
-        telegram: req.body.telegram,
-        discord: req.body.discord,
-      });
-      await tokenDoc.save().catch(() => {}); // Ignore duplicate errors
+      // Database operations using safe wrapper - run in background
+      const dbOperations = async () => {
+        // Save token metadata
+        await safeDbOperation(async () => {
+          const tokenDoc = new Token({
+            mint: preparedData.mintAddress,
+            name: req.body.name,
+            symbol: req.body.symbol,
+            decimals: req.body.decimals,
+            supply: req.body.supply,
+            owner: req.body.ownerWallet,
+            network: network,
+            mintAuthority: req.body.mintAuthority,
+            freezeAuthority: req.body.freezeAuthority,
+            description: req.body.description,
+            image: req.body.image,
+            website: req.body.website,
+            twitter: req.body.twitter,
+            telegram: req.body.telegram,
+            discord: req.body.discord,
+          });
+          return await tokenDoc.save();
+        });
 
-      // Save user if not present
-      if (req.body.ownerWallet) {
-        await User.updateOne(
-          { wallet: req.body.ownerWallet },
-          { $setOnInsert: { wallet: req.body.ownerWallet } },
-          { upsert: true }
-        );
-      }
+        // Save user if not present
+        if (req.body.ownerWallet) {
+          await safeDbOperation(async () => {
+            return await User.updateOne(
+              { wallet: req.body.ownerWallet },
+              { $setOnInsert: { wallet: req.body.ownerWallet } },
+              { upsert: true }
+            );
+          });
+        }
 
-      // Log creation event
-      await TransactionLog.create({
-        type: 'mint',
-        mint: preparedData.mintAddress,
-        from: null,
-        to: req.body.ownerWallet,
-        amount: (req.body.supply * Math.pow(10, req.body.decimals)).toString(),
-        decimals: req.body.decimals,
-        txSignature: null,
-        meta: { event: 'create', ...req.body },
-        network: network,
-      });
+        // Log creation event
+        await safeDbOperation(async () => {
+          return await TransactionLog.create({
+            type: 'mint',
+            mint: preparedData.mintAddress,
+            from: null,
+            to: req.body.ownerWallet,
+            amount: (req.body.supply * Math.pow(10, req.body.decimals)).toString(),
+            decimals: req.body.decimals,
+            txSignature: null,
+            meta: { event: 'create', ...req.body },
+            network: network,
+          });
+        });
+      };
 
+      // Run database operations in background, don't wait for them
+      dbOperations();
+
+      // Return the prepared transaction data immediately
       res.json(preparedData);
     } catch (error) {
       console.error('Error preparing token creation:', error);
@@ -123,8 +137,10 @@ router.get('/:address', async (req, res) => {
       // If tokenInfo is null, it means the token was not found.
       return res.status(404).json({ error: 'Token not found' });
     }
-    // Try to get metadata from MongoDB
-    const dbMeta = await Token.findOne({ mint: req.params.address }).lean();
+    // Try to get metadata from MongoDB using safe operation
+    const dbMeta = await safeDbOperation(async () => {
+      return await Token.findOne({ mint: req.params.address }).lean();
+    });
     // Merge dbMeta into tokenInfo, preferring on-chain for supply/decimals, dbMeta for name/symbol/description
     const merged = {
       ...dbMeta,
@@ -223,20 +239,22 @@ router.post(
       const connection = getConnection(network);
       const result = await transferTokens(req.body, connection);
 
-      // Log the transfer transaction
-      await TransactionLog.create({
-        type: 'transfer',
-        mint: req.body.tokenMint,
-        from: req.body.sender,
-        to: req.body.recipient,
-        amount: (req.body.amount * Math.pow(10, req.body.decimals)).toString(),
-        decimals: req.body.decimals,
-        txSignature: null, // Will be updated when client confirms
-        meta: { 
-          event: 'transfer_prepared',
-          ...req.body 
-        },
-        network: network,
+      // Log the transfer transaction using safe operation
+      await safeDbOperation(async () => {
+        return await TransactionLog.create({
+          type: 'transfer',
+          mint: req.body.tokenMint,
+          from: req.body.sender,
+          to: req.body.recipient,
+          amount: (req.body.amount * Math.pow(10, req.body.decimals)).toString(),
+          decimals: req.body.decimals,
+          txSignature: null, // Will be updated when client confirms
+          meta: {
+            event: 'transfer_prepared',
+            ...req.body
+          },
+          network: network,
+        });
       });
 
       res.json(result);
@@ -273,21 +291,23 @@ router.post(
       const connection = getConnection(network);
       const result = await mintAdditionalTokens(req.body, connection);
 
-      // Log the mint transaction
-      await TransactionLog.create({
-        type: 'mint',
-        mint: req.body.tokenMint,
-        from: null,
-        to: req.body.mintAuthority, // Mint authority is typically the recipient
-        amount: (req.body.amount * Math.pow(10, req.body.decimals)).toString(),
-        decimals: req.body.decimals,
-        txSignature: null, // Will be updated when client confirms
-        meta: { 
-          event: 'mint_prepared',
-          destinationAccount: req.body.destinationAccount,
-          ...req.body 
-        },
-        network: network,
+      // Log the mint transaction using safe operation
+      await safeDbOperation(async () => {
+        return await TransactionLog.create({
+          type: 'mint',
+          mint: req.body.tokenMint,
+          from: null,
+          to: req.body.mintAuthority, // Mint authority is typically the recipient
+          amount: (req.body.amount * Math.pow(10, req.body.decimals)).toString(),
+          decimals: req.body.decimals,
+          txSignature: null, // Will be updated when client confirms
+          meta: {
+            event: 'mint_prepared',
+            destinationAccount: req.body.destinationAccount,
+            ...req.body
+          },
+          network: network,
+        });
       });
 
       res.json(result);
@@ -324,21 +344,23 @@ router.post(
       const connection = getConnection(network);
       const result = await burnTokens(req.body, connection);
 
-      // Log the burn transaction
-      await TransactionLog.create({
-        type: 'burn',
-        mint: req.body.tokenMint,
-        from: req.body.owner,
-        to: null,
-        amount: (req.body.amount * Math.pow(10, req.body.decimals)).toString(),
-        decimals: req.body.decimals,
-        txSignature: null, // Will be updated when client confirms
-        meta: { 
-          event: 'burn_prepared',
-          tokenAccount: req.body.tokenAccount,
-          ...req.body 
-        },
-        network: network,
+      // Log the burn transaction using safe operation
+      await safeDbOperation(async () => {
+        return await TransactionLog.create({
+          type: 'burn',
+          mint: req.body.tokenMint,
+          from: req.body.owner,
+          to: null,
+          amount: (req.body.amount * Math.pow(10, req.body.decimals)).toString(),
+          decimals: req.body.decimals,
+          txSignature: null, // Will be updated when client confirms
+          meta: {
+            event: 'burn_prepared',
+            tokenAccount: req.body.tokenAccount,
+            ...req.body
+          },
+          network: network,
+        });
       });
 
       res.json(result);
@@ -423,22 +445,26 @@ router.get('/:address/transactions', async (req, res) => {
     
     console.log(`Fetching transactions for mint: ${address}, network: ${network}, page: ${page}, limit: ${limit}`);
     
-    // Get transactions from database
+    // Get transactions from database using safe operation
     const query = { mint: address };
     if (network) {
       query.network = network;
     }
     
-    const transactions = await TransactionLog.find(query)
-      .sort({ timestamp: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .lean();
+    const transactions = await safeDbOperation(async () => {
+      return await TransactionLog.find(query)
+        .sort({ timestamp: -1 })
+        .limit(parseInt(limit))
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .lean();
+    }, []);
 
     console.log(`Found ${transactions.length} transactions`);
     
-    // Get total count for pagination
-    const total = await TransactionLog.countDocuments(query);
+    // Get total count for pagination using safe operation
+    const total = await safeDbOperation(async () => {
+      return await TransactionLog.countDocuments(query);
+    }, 0);
 
     // Format transactions for frontend
     const formattedTransactions = transactions.map(tx => ({
@@ -493,42 +519,50 @@ router.post('/transactions/confirm', async (req, res) => {
       blockchainAmount = (parseFloat(req.body.amount) * Math.pow(10, decimals)).toString();
     }
     
-    // Find and update the most recent transaction of this type for this mint
-    const transaction = await TransactionLog.findOneAndUpdate(
-      { 
-        mint, 
-        type, 
-        txSignature: null,
-        network
-      },
-      { 
-        txSignature: signature,
-        meta: { ...req.body.meta, confirmed: true, confirmedAt: new Date() },
-        network
-      },
-      { sort: { timestamp: -1 }, new: true }
-    );
+    // Find and update the most recent transaction using safe operation
+    const transaction = await safeDbOperation(async () => {
+      return await TransactionLog.findOneAndUpdate(
+        {
+          mint,
+          type,
+          txSignature: null,
+          network
+        },
+        {
+          txSignature: signature,
+          meta: { ...req.body.meta, confirmed: true, confirmedAt: new Date() },
+          network
+        },
+        { sort: { timestamp: -1 }, new: true }
+      );
+    });
 
     if (!transaction) {
       console.log(`No matching transaction found for mint=${mint}, type=${type}, network=${network}`);
       
-      // If no transaction was found to update, create a new one
-      const newTransaction = new TransactionLog({
-        type,
-        mint,
-        from: req.body.from || null,
-        to: req.body.to || null,
-        amount: blockchainAmount,
-        decimals: req.body.decimals || 9,
-        txSignature: signature,
-        meta: { ...req.body.meta, confirmed: true, confirmedAt: new Date() },
-        network
+      // If no transaction was found to update, create a new one using safe operation
+      const newTransaction = await safeDbOperation(async () => {
+        const txLog = new TransactionLog({
+          type,
+          mint,
+          from: req.body.from || null,
+          to: req.body.to || null,
+          amount: blockchainAmount,
+          decimals: req.body.decimals || 9,
+          txSignature: signature,
+          meta: { ...req.body.meta, confirmed: true, confirmedAt: new Date() },
+          network
+        });
+        return await txLog.save();
       });
       
-      await newTransaction.save();
-      console.log(`Created new transaction record with signature=${signature}`);
-      
-      return res.json({ success: true, transaction: newTransaction });
+      if (newTransaction) {
+        console.log(`Created new transaction record with signature=${signature}`);
+        return res.json({ success: true, transaction: newTransaction });
+      } else {
+        console.log(`Failed to create new transaction record`);
+        return res.json({ success: true, message: 'Transaction processed but not logged' });
+      }
     }
 
     console.log(`Updated transaction record: ${transaction._id}`);

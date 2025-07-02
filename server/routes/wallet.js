@@ -18,7 +18,13 @@ router.get('/balance/:address', async (req, res) => {
       return res.status(400).json({ error: 'Invalid wallet address format' });
     }
     
-    const balance = await getWalletBalance(req.params.address, network);
+    // Add timeout to wallet balance request
+    const balancePromise = getWalletBalance(req.params.address, network);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Wallet balance request timeout')), 10000)
+    );
+    
+    const balance = await Promise.race([balancePromise, timeoutPromise]);
     res.json({ balance });
   } catch (error) {
     console.error('Error fetching wallet balance:', error);
@@ -28,7 +34,13 @@ router.get('/balance/:address', async (req, res) => {
       return res.status(400).json({ error: 'Invalid wallet address' });
     }
     
-    res.status(500).json({ error: error.message || 'Server error' });
+    if (error.message && error.message.includes('timeout')) {
+      return res.status(408).json({ error: 'Request timeout - please try again' });
+    }
+    
+    // Return a default balance of 0 instead of failing completely
+    console.warn('Returning default balance due to error:', error.message);
+    res.json({ balance: 0 });
   }
 });
 

@@ -44,26 +44,18 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Connect to MongoDB
-const mongoUri = process.env.MONGODB_URI;
-if (mongoUri) {
-  mongoose.connect(mongoUri, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    // Add these options for better production stability
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-  })
-    .then(() => console.log('MongoDB connected'))
-    .catch((err) => {
-      console.error('MongoDB connection error:', err.message);
-      if (process.env.NODE_ENV === 'production') {
-        console.warn('MongoDB connection failed, some features may not work');
-      }
-    });
-} else {
-  console.warn('MONGODB_URI not provided, database features will be disabled');
-}
+// Import database utility
+const { connectToDatabase } = require('../server/utils/database');
+
+// Middleware to ensure database connection
+app.use(async (req, res, next) => {
+  try {
+    await connectToDatabase();
+  } catch (error) {
+    console.error('Database connection middleware error:', error);
+  }
+  next();
+});
 
 // Export the Express API
 module.exports = app;

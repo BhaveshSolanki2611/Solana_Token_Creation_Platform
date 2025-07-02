@@ -39,7 +39,8 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
     while (retries > 0) {
       try {
         const response = await axios.get(`/api/wallet/balance/${address}`, {
-          params: { network }
+          params: { network },
+          timeout: 15000 // 15 second timeout
         });
         setWalletBalance(response.data.balance);
         return response.data.balance;
@@ -48,15 +49,24 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
         console.error(`Error fetching wallet balance (retries left: ${retries}):`, error);
         retries--;
         
+        // If it's a 408 timeout or 500 error, don't retry as aggressively
+        if (error.response?.status === 408 || error.response?.status === 500) {
+          if (retries > 1) {
+            retries = 1; // Only one more retry for server errors
+          }
+        }
+        
         if (retries > 0) {
-          // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Exponential backoff
+          const delay = (4 - retries) * 2000;
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
     
     // All retries failed, but don't throw - return 0 instead
     console.error('Failed to get wallet balance after multiple attempts:', lastError);
+    setWalletBalance(0);
     return 0;
   };
 
