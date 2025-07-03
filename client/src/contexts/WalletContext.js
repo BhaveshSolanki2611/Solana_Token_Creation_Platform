@@ -36,36 +36,67 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
     let retries = 3;
     let lastError = null;
     
+    console.log(`Fetching balance for address: ${address}, network: ${network}`);
+    
     while (retries > 0) {
       try {
         const response = await axios.get(`/api/wallet/balance/${address}`, {
           params: { network },
-          timeout: 15000 // 15 second timeout
+          timeout: 20000, // Increased timeout for production
+          headers: {
+            'Content-Type': 'application/json'
+          }
         });
-        setWalletBalance(response.data.balance);
-        return response.data.balance;
+        
+        const balance = response.data.balance || 0;
+        console.log(`Balance fetched successfully: ${balance} SOL`);
+        setWalletBalance(balance);
+        return balance;
       } catch (error) {
         lastError = error;
         console.error(`Error fetching wallet balance (retries left: ${retries}):`, error);
-        retries--;
         
-        // If it's a 408 timeout or 500 error, don't retry as aggressively
-        if (error.response?.status === 408 || error.response?.status === 500) {
-          if (retries > 1) {
-            retries = 1; // Only one more retry for server errors
+        // Handle different error types
+        if (error.response) {
+          const status = error.response.status;
+          const errorData = error.response.data;
+          
+          console.error(`Server error ${status}:`, errorData);
+          
+          // Don't retry on client errors (4xx)
+          if (status >= 400 && status < 500 && status !== 408) {
+            console.error('Client error, not retrying:', errorData.error);
+            setWalletBalance(0);
+            return 0;
           }
+          
+          // For server errors (5xx) or timeouts (408), retry with reduced attempts
+          if (status >= 500 || status === 408) {
+            if (retries > 1) {
+              retries = 1; // Only one more retry for server errors
+            }
+          }
+        } else if (error.request) {
+          console.error('Network error - no response received');
+        } else {
+          console.error('Request setup error:', error.message);
         }
         
+        retries--;
+        
         if (retries > 0) {
-          // Exponential backoff
-          const delay = (4 - retries) * 2000;
+          // Exponential backoff with jitter
+          const baseDelay = (4 - retries) * 2000;
+          const jitter = Math.random() * 1000;
+          const delay = baseDelay + jitter;
+          console.log(`Waiting ${delay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
     
     // All retries failed, but don't throw - return 0 instead
-    console.error('Failed to get wallet balance after multiple attempts:', lastError);
+    console.error('Failed to get wallet balance after multiple attempts:', lastError?.message);
     setWalletBalance(0);
     return 0;
   };

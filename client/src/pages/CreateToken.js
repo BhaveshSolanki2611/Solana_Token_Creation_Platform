@@ -145,89 +145,138 @@ const CreateToken = () => {
     setSuccess('');
 
     try {
+      console.log('Starting token creation process...');
+      
       // 1. Generate the mint keypair on the frontend
       const mintKeypair = Keypair.generate();
       const mintPublicKey = mintKeypair.publicKey.toString();
+      
+      console.log('Generated mint keypair:', mintPublicKey);
 
-      // 2. Get the prepared transaction from the backend (send mintPublicKey)
-      const apiResponse = await axios.post('/api/tokens', {
+      // 2. Prepare token data with validation
+      const tokenPayload = {
         ...tokenData,
         ownerWallet: publicKey.toString(),
         mintAuthority: tokenData.mintAuthority || publicKey.toString(),
         freezeAuthority: tokenData.freezeAuthority || null,
         mintPublicKey, // send the mint public key to the backend
         network, // Include the current network
-      }, {
-        timeout: 30000, // 30 second timeout
+        // Ensure numeric fields are properly formatted
+        decimals: parseInt(tokenData.decimals),
+        supply: parseFloat(tokenData.supply)
+      };
+      
+      console.log('Token payload prepared:', tokenPayload);
+
+      // 3. Get the prepared transaction from the backend
+      const apiResponse = await axios.post('/api/tokens', tokenPayload, {
+        timeout: 45000, // Increased timeout for production
         headers: {
           'Content-Type': 'application/json'
         }
       });
+
+      console.log('API response received:', apiResponse.status);
 
       if (!apiResponse.data || !apiResponse.data.transaction) {
         throw new Error('Invalid response from server - missing transaction data');
       }
 
       const { transaction: base64Transaction, mintAddress } = apiResponse.data;
+      console.log('Transaction data received, mint address:', mintAddress);
 
-      // 3. Deserialize the transaction
+      // 4. Deserialize the transaction
       const transaction = Transaction.from(Buffer.from(base64Transaction, 'base64'));
+      console.log('Transaction deserialized successfully');
 
-      // 4. Set a fresh blockhash
-      const { blockhash } = await connection.getLatestBlockhash();
+      // 5. Set a fresh blockhash
+      console.log('Getting latest blockhash...');
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
+      console.log('Blockhash set:', blockhash);
 
-      // 5. Partially sign with the mint keypair
+      // 6. Partially sign with the mint keypair
       transaction.partialSign(mintKeypair);
+      console.log('Transaction partially signed with mint keypair');
 
-      // 6. Sign and send with the wallet
+      // 7. Sign and send with the wallet
+      console.log('Requesting wallet signature...');
       const signedTx = await wallet.signTransaction(transaction);
+      console.log('Transaction signed by wallet');
 
-      // 7. Send with retry logic
+      // 8. Send with retry logic
       let signature;
       let retries = 3;
       
       while (retries > 0) {
         try {
+          console.log(`Sending transaction (attempt ${4 - retries}/3)...`);
+          
           // Get a fresh blockhash for each retry
           if (retries < 3) {
-            const { blockhash: newBlockhash } = await connection.getLatestBlockhash();
+            console.log('Getting fresh blockhash for retry...');
+            const { blockhash: newBlockhash } = await connection.getLatestBlockhash('confirmed');
             transaction.recentBlockhash = newBlockhash;
             // Need to re-sign with new blockhash
             transaction.partialSign(mintKeypair);
             const newSignedTx = await wallet.signTransaction(transaction);
-            signature = await connection.sendRawTransaction(newSignedTx.serialize());
+            signature = await connection.sendRawTransaction(newSignedTx.serialize(), {
+              skipPreflight: false,
+              preflightCommitment: 'confirmed'
+            });
           } else {
-            signature = await connection.sendRawTransaction(signedTx.serialize());
+            signature = await connection.sendRawTransaction(signedTx.serialize(), {
+              skipPreflight: false,
+              preflightCommitment: 'confirmed'
+            });
           }
           
-          // Wait for confirmation
-          const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+          console.log('Transaction sent, signature:', signature);
+          
+          // Wait for confirmation with timeout
+          console.log('Waiting for transaction confirmation...');
+          const confirmationPromise = connection.confirmTransaction(signature, 'confirmed');
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Transaction confirmation timeout')), 60000)
+          );
+          
+          const confirmation = await Promise.race([confirmationPromise, timeoutPromise]);
           
           if (confirmation.value.err) {
-            throw new Error(`Transaction failed: ${confirmation.value.err}`);
+            throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
           }
           
+          console.log('Transaction confirmed successfully');
           // Success - break out of retry loop
           break;
         } catch (err) {
           retries--;
-          console.log(`Transaction attempt failed, retries left: ${retries}`);
+          console.error(`Transaction attempt failed, retries left: ${retries}`, err.message);
           
-          // If it's already processed or we're out of retries, throw the error
-          if (retries === 0 || !err.message.includes('already been processed')) {
+          // If it's already processed, consider it successful
+          if (err.message.includes('already been processed')) {
+            console.log('Transaction already processed, considering successful');
+            break;
+          }
+          
+          // If we're out of retries, throw the error
+          if (retries === 0) {
             throw err;
           }
           
-          // Wait a moment before retrying
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Wait before retrying with exponential backoff
+          const delay = (4 - retries) * 2000;
+          console.log(`Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
 
       setSuccess(`Token created successfully! Signature: ${signature}`);
       setCreatedToken({ tokenAddress: mintAddress });
+      
+      console.log('Token creation completed successfully');
 
-      // 8. Navigate to the new token's page after a delay
+      // 9. Navigate to the new token's page after a delay
       setTimeout(() => {
         navigate(`/token/${mintAddress}`);
       }, 3000);
@@ -240,7 +289,9 @@ const CreateToken = () => {
       if (error.response) {
         // Server responded with error status
         const status = error.response.status;
-        const serverError = error.response.data?.error;
+        const serverError = error.response.data?.error || error.response.data?.message;
+        
+        console.error(`Server error ${status}:`, serverError);
         
         if (status === 500) {
           errorMessage = serverError || 'Server error occurred. Please try again in a moment.';
@@ -248,18 +299,26 @@ const CreateToken = () => {
           errorMessage = 'Request timed out. Please check your connection and try again.';
         } else if (status === 400) {
           errorMessage = serverError || 'Invalid request. Please check your input.';
+        } else if (status === 503) {
+          errorMessage = 'Solana network unavailable. Please try again later.';
         } else {
           errorMessage = serverError || `Server error (${status}). Please try again.`;
         }
       } else if (error.request) {
         // Network error
+        console.error('Network error:', error.request);
         errorMessage = 'Network error. Please check your connection and try again.';
       } else if (error.message) {
         // Other errors
+        console.error('Other error:', error.message);
         if (error.message.includes('timeout')) {
           errorMessage = 'Request timed out. Please try again.';
         } else if (error.message.includes('Invalid response')) {
           errorMessage = 'Server returned invalid data. Please try again.';
+        } else if (error.message.includes('User rejected')) {
+          errorMessage = 'Transaction was rejected. Please try again.';
+        } else if (error.message.includes('Insufficient funds')) {
+          errorMessage = 'Insufficient SOL balance for transaction fees.';
         } else {
           errorMessage = error.message;
         }

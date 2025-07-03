@@ -75,57 +75,76 @@ router.post(
 
       // Database operations using safe wrapper - run in background
       const dbOperations = async () => {
-        // Save token metadata
-        await safeDbOperation(async () => {
-          const tokenDoc = new Token({
-            mint: preparedData.mintAddress,
-            name: req.body.name,
-            symbol: req.body.symbol,
-            decimals: req.body.decimals,
-            supply: req.body.supply,
-            owner: req.body.ownerWallet,
-            network: network,
-            mintAuthority: req.body.mintAuthority,
-            freezeAuthority: req.body.freezeAuthority,
-            description: req.body.description,
-            image: req.body.image,
-            website: req.body.website,
-            twitter: req.body.twitter,
-            telegram: req.body.telegram,
-            discord: req.body.discord,
-          });
-          return await tokenDoc.save();
-        });
-
-        // Save user if not present
-        if (req.body.ownerWallet) {
+        try {
+          // Save token metadata
           await safeDbOperation(async () => {
-            return await User.updateOne(
-              { wallet: req.body.ownerWallet },
-              { $setOnInsert: { wallet: req.body.ownerWallet } },
-              { upsert: true }
-            );
-          });
-        }
+            const tokenDoc = new Token({
+              mint: preparedData.mintAddress,
+              name: req.body.name,
+              symbol: req.body.symbol,
+              decimals: req.body.decimals,
+              supply: req.body.supply.toString(), // Ensure string format
+              owner: req.body.ownerWallet,
+              network: network,
+              mintAuthority: req.body.mintAuthority || req.body.ownerWallet,
+              freezeAuthority: req.body.freezeAuthority || null,
+              description: req.body.description || '',
+              image: req.body.image || '',
+              website: req.body.website || '',
+              twitter: req.body.twitter || '',
+              telegram: req.body.telegram || '',
+              discord: req.body.discord || '',
+            });
+            return await tokenDoc.save();
+          }, null);
 
-        // Log creation event
-        await safeDbOperation(async () => {
-          return await TransactionLog.create({
-            type: 'mint',
-            mint: preparedData.mintAddress,
-            from: null,
-            to: req.body.ownerWallet,
-            amount: (req.body.supply * Math.pow(10, req.body.decimals)).toString(),
-            decimals: req.body.decimals,
-            txSignature: null,
-            meta: { event: 'create', ...req.body },
-            network: network,
-          });
-        });
+          // Save user if not present - with better error handling
+          if (req.body.ownerWallet) {
+            await safeDbOperation(async () => {
+              return await User.updateOne(
+                { wallet: req.body.ownerWallet },
+                {
+                  $setOnInsert: {
+                    wallet: req.body.ownerWallet,
+                    createdAt: new Date()
+                  }
+                },
+                { upsert: true, timeout: 5000 }
+              );
+            }, null);
+          }
+
+          // Log creation event
+          await safeDbOperation(async () => {
+            return await TransactionLog.create({
+              type: 'mint',
+              mint: preparedData.mintAddress,
+              from: null,
+              to: req.body.ownerWallet,
+              amount: (req.body.supply * Math.pow(10, req.body.decimals)).toString(),
+              decimals: req.body.decimals,
+              txSignature: null,
+              meta: {
+                event: 'create',
+                tokenName: req.body.name,
+                tokenSymbol: req.body.symbol,
+                network: network
+              },
+              network: network,
+            });
+          }, null);
+          
+          console.log('Database operations completed successfully');
+        } catch (error) {
+          console.error('Database operations failed:', error.message);
+          // Don't throw - these are background operations
+        }
       };
 
       // Run database operations in background, don't wait for them
-      dbOperations();
+      dbOperations().catch(err => {
+        console.error('Background database operations failed:', err.message);
+      });
 
       // Return the prepared transaction data immediately
       res.json(preparedData);

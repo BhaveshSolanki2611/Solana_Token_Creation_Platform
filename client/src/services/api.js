@@ -1,8 +1,14 @@
 import axios from 'axios';
 
 // Base URL for API requests
-const API_URL = process.env.REACT_APP_API_URL || 
+const API_URL = process.env.REACT_APP_API_URL ||
                 (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000');
+
+console.log('API Configuration:', {
+  NODE_ENV: process.env.NODE_ENV,
+  API_URL,
+  REACT_APP_API_URL: process.env.REACT_APP_API_URL
+});
 
 // Create axios instance with default config
 const api = axios.create({
@@ -10,12 +16,28 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 45000, // 45 second timeout for production stability
+  timeout: 60000, // Increased timeout for production stability
+  withCredentials: false, // Disable credentials for CORS
 });
+
+// Add request interceptor for logging
+api.interceptors.request.use(
+  config => {
+    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    return config;
+  },
+  error => {
+    console.error('Request Error:', error);
+    return Promise.reject(error);
+  }
+);
 
 // Add response interceptor for error handling
 api.interceptors.response.use(
-  response => response,
+  response => {
+    console.log(`API Response: ${response.status} ${response.config.url}`);
+    return response;
+  },
   error => {
     // Handle network errors or server errors
     if (!error.response) {
@@ -23,9 +45,22 @@ api.interceptors.response.use(
       return Promise.reject(new Error('Network error. Please check your connection.'));
     }
     
-    // Log error details in development
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('API Error:', error.response);
+    // Log error details
+    console.error('API Error:', {
+      status: error.response.status,
+      statusText: error.response.statusText,
+      url: error.config?.url,
+      method: error.config?.method,
+      data: error.response.data
+    });
+    
+    // Handle specific error cases
+    if (error.response.status === 408) {
+      return Promise.reject(new Error('Request timeout. Please try again.'));
+    }
+    
+    if (error.response.status >= 500) {
+      return Promise.reject(new Error('Server error. Please try again later.'));
     }
     
     return Promise.reject(error);

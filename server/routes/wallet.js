@@ -12,35 +12,76 @@ const router = express.Router();
 router.get('/balance/:address', async (req, res) => {
   try {
     const { network = 'devnet' } = req.query;
+    const { address } = req.params;
+    
+    console.log(`Fetching balance for address: ${address}, network: ${network}`);
     
     // Validate wallet address format
-    if (!req.params.address || req.params.address.length !== 44) {
+    if (!address || typeof address !== 'string') {
+      return res.status(400).json({ error: 'Wallet address is required' });
+    }
+    
+    // More flexible address validation (Solana addresses can be 32-44 characters)
+    if (address.length < 32 || address.length > 44) {
       return res.status(400).json({ error: 'Invalid wallet address format' });
     }
     
-    // Add timeout to wallet balance request
-    const balancePromise = getWalletBalance(req.params.address, network);
+    // Validate network
+    const validNetworks = ['devnet', 'testnet', 'mainnet-beta'];
+    if (!validNetworks.includes(network)) {
+      return res.status(400).json({ error: 'Invalid network specified' });
+    }
+    
+    // Add timeout to wallet balance request with longer timeout for production
+    const timeoutMs = process.env.NODE_ENV === 'production' ? 15000 : 10000;
+    const balancePromise = getWalletBalance(address, network);
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Wallet balance request timeout')), 10000)
+      setTimeout(() => reject(new Error('Wallet balance request timeout')), timeoutMs)
     );
     
     const balance = await Promise.race([balancePromise, timeoutPromise]);
-    res.json({ balance });
+    
+    console.log(`Balance fetched successfully: ${balance} SOL`);
+    res.json({
+      balance,
+      address,
+      network,
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     console.error('Error fetching wallet balance:', error);
     
     // Send appropriate error response based on error type
     if (error.message && error.message.includes('Invalid public key')) {
-      return res.status(400).json({ error: 'Invalid wallet address' });
+      return res.status(400).json({
+        error: 'Invalid wallet address',
+        details: 'The provided wallet address format is not valid'
+      });
     }
     
     if (error.message && error.message.includes('timeout')) {
-      return res.status(408).json({ error: 'Request timeout - please try again' });
+      return res.status(408).json({
+        error: 'Request timeout - please try again',
+        details: 'The Solana network request timed out'
+      });
+    }
+    
+    if (error.message && error.message.includes('Network request failed')) {
+      return res.status(503).json({
+        error: 'Solana network unavailable',
+        details: 'Unable to connect to Solana network'
+      });
     }
     
     // Return a default balance of 0 instead of failing completely
     console.warn('Returning default balance due to error:', error.message);
-    res.json({ balance: 0 });
+    res.json({
+      balance: 0,
+      address: req.params.address,
+      network: req.query.network || 'devnet',
+      error: 'Could not fetch balance, showing default',
+      timestamp: new Date().toISOString()
+    });
   }
 });
 

@@ -4,57 +4,112 @@ const path = require('path');
 require('dotenv').config();
 const mongoose = require('mongoose');
 
+// Import database utility
+const { connectToDatabase } = require('../server/utils/database');
+
 // Initialize express app
 const app = express();
 
-// Middleware
-app.use(express.json());
+// Middleware to ensure database connection (MUST be first)
+app.use(async (req, res, next) => {
+  try {
+    await connectToDatabase();
+  } catch (error) {
+    console.error('Database connection middleware error:', error);
+    // Don't fail the request, just log the error
+  }
+  next();
+});
 
-// CORS configuration
+// Middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// CORS configuration - Updated for production
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.CLIENT_URL || 'https://token-creation-platform.vercel.app', /\.vercel\.app$/] 
-    : 'http://localhost:3000',
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  origin: process.env.NODE_ENV === 'production'
+    ? [
+        'https://solana-token-creation-platform-ten.vercel.app',
+        'https://solana-token-creation-platform.vercel.app',
+        /\.vercel\.app$/,
+        process.env.CLIENT_URL
+      ].filter(Boolean)
+    : ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   credentials: true,
-  optionsSuccessStatus: 204
+  optionsSuccessStatus: 204,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  preflightContinue: false
 };
 app.use(cors(corsOptions));
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'ok', 
-    environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test database connection
+    const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+    
+    res.status(200).json({
+      status: 'ok',
+      environment: process.env.NODE_ENV || 'development',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: dbStatus,
+      version: '1.0.0'
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Define routes
 app.use('/api/tokens', require('../server/routes/tokens'));
 app.use('/api/wallet', require('../server/routes/wallet'));
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    error: 'Server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'An unexpected error occurred'
+// 404 handler for API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({
+    error: 'API endpoint not found',
+    path: req.path,
+    method: req.method
   });
 });
 
-// Import database utility
-const { connectToDatabase } = require('../server/utils/database');
-
-// Middleware to ensure database connection
-app.use(async (req, res, next) => {
-  try {
-    await connectToDatabase();
-  } catch (error) {
-    console.error('Database connection middleware error:', error);
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Global error handler:', err);
+  
+  // Handle specific error types
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({
+      error: 'Validation error',
+      details: err.message
+    });
   }
-  next();
+  
+  if (err.name === 'CastError') {
+    return res.status(400).json({
+      error: 'Invalid data format',
+      details: err.message
+    });
+  }
+  
+  if (err.code === 11000) {
+    return res.status(409).json({
+      error: 'Duplicate entry',
+      details: 'Resource already exists'
+    });
+  }
+  
+  res.status(err.status || 500).json({
+    error: 'Server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'An unexpected error occurred',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Export the Express API
