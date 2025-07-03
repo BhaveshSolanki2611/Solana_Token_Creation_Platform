@@ -9,11 +9,11 @@ async function testTokenCreation() {
     symbol: 'TEST',
     decimals: 9,
     supply: 1000000,
-    ownerWallet: '11111111111111111111111111111112', // Valid base58 address format
-    mintPublicKey: '11111111111111111111111111111113', // Valid base58 address format
+    ownerWallet: 'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1', // Valid Solana wallet address
+    mintPublicKey: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // Valid mint address format
     network: 'devnet',
     description: 'Test token for debugging',
-    mintAuthority: '11111111111111111111111111111112',
+    mintAuthority: 'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1',
     freezeAuthority: null
   };
 
