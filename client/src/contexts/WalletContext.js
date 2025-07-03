@@ -29,7 +29,7 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
   // Access the wallet modal
   const { setVisible } = useWalletModal();
 
-  // Function to get wallet balance
+  // Enhanced function to get wallet balance with better error handling
   const getWalletBalance = async (address) => {
     if (!address) return 0;
     
@@ -42,7 +42,7 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
       try {
         const response = await axios.get(`/api/wallet/balance/${address}`, {
           params: { network },
-          timeout: 20000, // Increased timeout for production
+          timeout: 15000, // Reduced timeout to fail faster
           headers: {
             'Content-Type': 'application/json'
           }
@@ -54,49 +54,104 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
         return balance;
       } catch (error) {
         lastError = error;
-        console.error(`Error fetching wallet balance (retries left: ${retries}):`, error);
+        
+        // Enhanced error logging with full error details to prevent truncation
+        const errorDetails = {
+          message: error.message || 'Unknown error',
+          status: error.response?.status || 'No status',
+          statusText: error.response?.statusText || 'No status text',
+          url: error.config?.url || 'No URL',
+          method: error.config?.method || 'No method',
+          timeout: error.code === 'ECONNABORTED',
+          networkError: !error.response && error.request,
+          retriesLeft: retries - 1
+        };
+        
+        // Log full error response data to prevent "Po" truncation
+        if (error.response?.data) {
+          errorDetails.responseData = {
+            error: error.response.data.error || 'No error field',
+            message: error.response.data.message || 'No message field',
+            details: error.response.data.details || 'No details field',
+            stack: error.response.data.stack || 'No stack field',
+            fullData: JSON.stringify(error.response.data).substring(0, 500) // Limit to prevent huge logs
+          };
+        }
+        
+        console.error(`Error fetching wallet balance:`, errorDetails);
         
         // Handle different error types
         if (error.response) {
           const status = error.response.status;
           const errorData = error.response.data;
           
-          console.error(`Server error ${status}:`, errorData);
+          // Log server errors with full context
+          console.error(`Server error ${status} details:`, {
+            url: `/api/wallet/balance/${address}?network=${network}`,
+            status: status,
+            statusText: error.response.statusText,
+            headers: error.response.headers,
+            data: errorData
+          });
           
-          // Don't retry on client errors (4xx)
+          // Don't retry on client errors (4xx) except timeouts
           if (status >= 400 && status < 500 && status !== 408) {
-            console.error('Client error, not retrying:', errorData.error);
+            const clientError = errorData?.error || errorData?.message || `HTTP ${status} error`;
+            console.error('Client error, not retrying:', clientError);
             setWalletBalance(0);
             return 0;
           }
           
-          // For server errors (5xx) or timeouts (408), retry with reduced attempts
+          // For server errors (5xx) or timeouts (408), limit retries
           if (status >= 500 || status === 408) {
+            console.warn(`Server error ${status}, will retry with reduced attempts`);
             if (retries > 1) {
-              retries = 1; // Only one more retry for server errors
+              retries = Math.min(retries, 2); // Limit to 1 more retry for server errors
             }
           }
         } else if (error.request) {
-          console.error('Network error - no response received');
+          console.error('Network error - no response received:', {
+            timeout: error.code === 'ECONNABORTED',
+            code: error.code,
+            message: error.message,
+            url: error.config?.url
+          });
         } else {
-          console.error('Request setup error:', error.message);
+          console.error('Request setup error:', {
+            message: error.message,
+            config: error.config
+          });
         }
         
         retries--;
         
         if (retries > 0) {
-          // Exponential backoff with jitter
-          const baseDelay = (4 - retries) * 2000;
-          const jitter = Math.random() * 1000;
-          const delay = baseDelay + jitter;
-          console.log(`Waiting ${delay}ms before retry...`);
+          // Shorter delays for faster failure
+          const delay = (4 - retries) * 1000; // 1s, 2s delays
+          console.log(`Waiting ${delay}ms before retry (${retries} retries left)...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
     
-    // All retries failed, but don't throw - return 0 instead
-    console.error('Failed to get wallet balance after multiple attempts:', lastError?.message);
+    // All retries failed - log comprehensive final error
+    const finalErrorDetails = {
+      address: address,
+      network: network,
+      totalRetries: 3,
+      finalError: {
+        message: lastError?.message || 'Unknown error',
+        status: lastError?.response?.status || 'No status',
+        responseError: lastError?.response?.data?.error || 'No response error',
+        responseMessage: lastError?.response?.data?.message || 'No response message',
+        isTimeout: lastError?.code === 'ECONNABORTED',
+        isNetworkError: !lastError?.response && lastError?.request
+      }
+    };
+    
+    console.error('Failed to get wallet balance after all retries:', finalErrorDetails);
+    
+    // Set balance to 0 but don't throw error - balance fetch is not critical for token creation
     setWalletBalance(0);
     return 0;
   };

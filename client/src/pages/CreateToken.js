@@ -331,51 +331,54 @@ const CreateToken = () => {
             throw new Error(`Failed to send transaction: ${sendError.message}`);
           }
           
-          // Confirm transaction with timeout protection
+          // Enhanced confirmation with multiple verification methods
           console.log('Waiting for transaction confirmation...');
           
-          try {
-            // Use Promise.race to add our own timeout
-            const confirmationPromise = connection.confirmTransaction({
-              signature,
-              blockhash,
-              lastValidBlockHeight
-            }, 'confirmed');
+          let confirmationSuccess = false;
+          let confirmationAttempts = 0;
+          const maxConfirmationAttempts = 3;
+          
+          while (!confirmationSuccess && confirmationAttempts < maxConfirmationAttempts) {
+            confirmationAttempts++;
+            console.log(`Confirmation attempt ${confirmationAttempts}/${maxConfirmationAttempts}`);
             
-            const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Confirmation timeout')), 30000)
-            );
-            
-            const confirmation = await Promise.race([confirmationPromise, timeoutPromise]);
-            
-            if (confirmation.value.err) {
-              throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-            }
-            
-            console.log('Transaction confirmed successfully');
-            confirmed = true;
-            break;
-            
-          } catch (confirmError) {
-            console.error('Confirmation error:', confirmError.message);
-            
-            // Check if transaction was actually successful despite timeout
-            if (confirmError.message.includes('timeout') ||
-                confirmError.name === 'TransactionExpiredTimeoutError' ||
-                confirmError.message.includes('was not confirmed')) {
+            try {
+              // Method 1: Standard confirmation with shorter timeout
+              const confirmationPromise = connection.confirmTransaction({
+                signature,
+                blockhash,
+                lastValidBlockHeight
+              }, 'confirmed');
               
-              console.log('Confirmation timed out, checking transaction status manually...');
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Confirmation timeout')), 15000) // Reduced timeout
+              );
               
-              // Wait a bit for the transaction to potentially settle
-              await new Promise(resolve => setTimeout(resolve, 5000));
+              const confirmation = await Promise.race([confirmationPromise, timeoutPromise]);
+              
+              if (confirmation.value.err) {
+                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+              }
+              
+              console.log('Transaction confirmed successfully via standard method');
+              confirmationSuccess = true;
+              confirmed = true;
+              break;
+              
+            } catch (confirmError) {
+              console.log(`Confirmation attempt ${confirmationAttempts} failed:`, confirmError.message);
+              
+              // Method 2: Check signature status directly
+              console.log('Checking transaction status via signature lookup...');
               
               try {
-                // Check if the transaction actually succeeded
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+                
                 const signatureStatus = await connection.getSignatureStatus(signature, {
                   searchTransactionHistory: true
                 });
                 
-                console.log('Signature status check result:', signatureStatus);
+                console.log('Signature status result:', signatureStatus);
                 
                 if (signatureStatus.value) {
                   if (signatureStatus.value.err) {
@@ -383,24 +386,60 @@ const CreateToken = () => {
                   }
                   
                   if (signatureStatus.value.confirmationStatus) {
-                    console.log('Transaction found with status:', signatureStatus.value.confirmationStatus);
+                    console.log('Transaction confirmed via signature status:', signatureStatus.value.confirmationStatus);
+                    confirmationSuccess = true;
                     confirmed = true;
                     break;
                   }
                 }
                 
-                // If no status found, continue with retry
-                console.log('No transaction status found, will retry');
+                // Method 3: Try to get transaction details
+                console.log('Attempting to fetch transaction details...');
+                try {
+                  const txDetails = await connection.getTransaction(signature, {
+                    commitment: 'confirmed',
+                    maxSupportedTransactionVersion: 0
+                  });
+                  
+                  if (txDetails) {
+                    console.log('Transaction found in blockchain:', txDetails.meta?.err ? 'FAILED' : 'SUCCESS');
+                    if (!txDetails.meta?.err) {
+                      confirmationSuccess = true;
+                      confirmed = true;
+                      break;
+                    } else {
+                      throw new Error(`Transaction failed: ${JSON.stringify(txDetails.meta.err)}`);
+                    }
+                  }
+                } catch (txError) {
+                  console.log('Could not fetch transaction details:', txError.message);
+                }
                 
               } catch (statusError) {
-                console.error('Error checking signature status:', statusError.message);
+                console.error('Error in signature status check:', statusError.message);
+              }
+              
+              // If this is the last confirmation attempt and we're on the last retry
+              if (confirmationAttempts === maxConfirmationAttempts && retries === 1) {
+                // Give user helpful message with signature
+                throw new Error(
+                  `Transaction submitted but confirmation uncertain. ` +
+                  `Signature: ${signature}. ` +
+                  `Please check Solana Explorer to verify if your token was created successfully.`
+                );
+              }
+              
+              // Wait before next confirmation attempt
+              if (confirmationAttempts < maxConfirmationAttempts) {
+                console.log('Waiting 3 seconds before next confirmation attempt...');
+                await new Promise(resolve => setTimeout(resolve, 3000));
               }
             }
-            
-            // If this was the last retry, throw the error
-            if (retries === 1) {
-              throw confirmError;
-            }
+          }
+          
+          if (confirmationSuccess) {
+            console.log('Transaction confirmation completed successfully');
+            break;
           }
           
         } catch (err) {
