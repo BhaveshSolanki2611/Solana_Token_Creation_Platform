@@ -146,14 +146,22 @@ const CreateToken = () => {
 
     try {
       console.log('Starting token creation process...');
+      console.log('Wallet connected:', connected);
+      console.log('Public key:', publicKey?.toString());
+      console.log('Network:', network);
       
-      // 1. Generate the mint keypair on the frontend
+      // 1. Validate wallet connection
+      if (!connected || !publicKey) {
+        throw new Error('Wallet not connected. Please connect your wallet first.');
+      }
+      
+      // 2. Generate the mint keypair on the frontend
       const mintKeypair = Keypair.generate();
       const mintPublicKey = mintKeypair.publicKey.toString();
       
       console.log('Generated mint keypair:', mintPublicKey);
 
-      // 2. Prepare token data with validation
+      // 3. Prepare token data with validation
       const tokenPayload = {
         ...tokenData,
         ownerWallet: publicKey.toString(),
@@ -166,80 +174,179 @@ const CreateToken = () => {
         supply: parseFloat(tokenData.supply)
       };
       
-      console.log('Token payload prepared:', tokenPayload);
+      console.log('Token payload prepared:', {
+        name: tokenPayload.name,
+        symbol: tokenPayload.symbol,
+        decimals: tokenPayload.decimals,
+        supply: tokenPayload.supply,
+        ownerWallet: tokenPayload.ownerWallet,
+        mintPublicKey: tokenPayload.mintPublicKey,
+        network: tokenPayload.network
+      });
 
-      // 3. Get the prepared transaction from the backend
+      // 4. Get the prepared transaction from the backend
+      console.log('Sending request to backend...');
       const apiResponse = await axios.post('/api/tokens', tokenPayload, {
-        timeout: 45000, // Increased timeout for production
+        timeout: 60000, // Increased timeout for production
         headers: {
           'Content-Type': 'application/json'
         }
       });
 
-      console.log('API response received:', apiResponse.status);
+      console.log('API response received:', {
+        status: apiResponse.status,
+        statusText: apiResponse.statusText,
+        hasData: !!apiResponse.data,
+        hasTransaction: !!apiResponse.data?.transaction,
+        hasMintAddress: !!apiResponse.data?.mintAddress
+      });
 
-      if (!apiResponse.data || !apiResponse.data.transaction) {
+      if (!apiResponse.data) {
+        throw new Error('Empty response from server');
+      }
+
+      if (!apiResponse.data.transaction) {
+        console.error('Server response:', apiResponse.data);
         throw new Error('Invalid response from server - missing transaction data');
       }
 
       const { transaction: base64Transaction, mintAddress } = apiResponse.data;
-      console.log('Transaction data received, mint address:', mintAddress);
+      console.log('Transaction data received:', {
+        mintAddress,
+        transactionLength: base64Transaction?.length
+      });
 
-      // 4. Deserialize the transaction
-      const transaction = Transaction.from(Buffer.from(base64Transaction, 'base64'));
-      console.log('Transaction deserialized successfully');
+      // 5. Deserialize the transaction
+      console.log('Deserializing transaction...');
+      let transaction;
+      try {
+        transaction = Transaction.from(Buffer.from(base64Transaction, 'base64'));
+        console.log('Transaction deserialized successfully');
+      } catch (deserializeError) {
+        console.error('Transaction deserialization error:', deserializeError);
+        throw new Error(`Failed to deserialize transaction: ${deserializeError.message}`);
+      }
 
-      // 5. Set a fresh blockhash
+      // 6. Set a fresh blockhash
       console.log('Getting latest blockhash...');
-      const { blockhash } = await connection.getLatestBlockhash('confirmed');
-      transaction.recentBlockhash = blockhash;
-      console.log('Blockhash set:', blockhash);
+      let blockhash, lastValidBlockHeight;
+      try {
+        const blockhashInfo = await connection.getLatestBlockhash('confirmed');
+        blockhash = blockhashInfo.blockhash;
+        lastValidBlockHeight = blockhashInfo.lastValidBlockHeight;
+        transaction.recentBlockhash = blockhash;
+        console.log('Blockhash set:', blockhash);
+      } catch (blockhashError) {
+        console.error('Failed to get blockhash:', blockhashError);
+        throw new Error(`Failed to get latest blockhash: ${blockhashError.message}`);
+      }
 
-      // 6. Partially sign with the mint keypair
-      transaction.partialSign(mintKeypair);
-      console.log('Transaction partially signed with mint keypair');
+      // 7. Partially sign with the mint keypair
+      console.log('Partially signing transaction with mint keypair...');
+      try {
+        transaction.partialSign(mintKeypair);
+        console.log('Transaction partially signed with mint keypair');
+      } catch (signError) {
+        console.error('Partial signing error:', signError);
+        throw new Error(`Failed to partially sign transaction: ${signError.message}`);
+      }
 
-      // 7. Sign and send with the wallet
+      // 8. Sign with the wallet
       console.log('Requesting wallet signature...');
-      const signedTx = await wallet.signTransaction(transaction);
-      console.log('Transaction signed by wallet');
+      let signedTx;
+      try {
+        // Check if we have the wallet adapter or direct wallet access
+        if (wallet.signTransaction) {
+          signedTx = await wallet.signTransaction(transaction);
+        } else if (window.solana?.signTransaction) {
+          signedTx = await window.solana.signTransaction(transaction);
+        } else {
+          throw new Error('No wallet signing method available');
+        }
+        console.log('Transaction signed by wallet');
+      } catch (walletSignError) {
+        console.error('Wallet signing error:', walletSignError);
+        if (walletSignError.message.includes('User rejected')) {
+          throw new Error('Transaction was rejected by user');
+        }
+        throw new Error(`Failed to sign transaction with wallet: ${walletSignError.message}`);
+      }
 
-      // 8. Send with enhanced retry logic and proper confirmation
+      // 9. Send transaction with enhanced retry logic and proper confirmation
       let signature;
       let retries = 3;
       let confirmed = false;
+      
+      console.log('Starting transaction sending process...');
       
       while (retries > 0 && !confirmed) {
         try {
           console.log(`Sending transaction (attempt ${4 - retries}/3)...`);
           
-          // Get a fresh blockhash for each attempt
-          console.log('Getting fresh blockhash...');
-          const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-          transaction.recentBlockhash = blockhash;
-          
-          // Re-sign with fresh blockhash
-          transaction.partialSign(mintKeypair);
-          const freshSignedTx = await wallet.signTransaction(transaction);
+          // For retry attempts, get fresh blockhash and re-sign
+          if (retries < 3) {
+            console.log('Getting fresh blockhash for retry...');
+            try {
+              const freshBlockhashInfo = await connection.getLatestBlockhash('confirmed');
+              blockhash = freshBlockhashInfo.blockhash;
+              lastValidBlockHeight = freshBlockhashInfo.lastValidBlockHeight;
+              transaction.recentBlockhash = blockhash;
+              
+              // Re-sign with fresh blockhash
+              transaction.partialSign(mintKeypair);
+              if (wallet.signTransaction) {
+                signedTx = await wallet.signTransaction(transaction);
+              } else if (window.solana?.signTransaction) {
+                signedTx = await window.solana.signTransaction(transaction);
+              }
+              console.log('Transaction re-signed with fresh blockhash');
+            } catch (refreshError) {
+              console.error('Failed to refresh blockhash:', refreshError);
+              throw new Error(`Failed to refresh blockhash: ${refreshError.message}`);
+            }
+          }
           
           // Send transaction with enhanced options
-          signature = await connection.sendRawTransaction(freshSignedTx.serialize(), {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-            maxRetries: 2
-          });
+          console.log('Sending raw transaction...');
+          try {
+            signature = await connection.sendRawTransaction(signedTx.serialize(), {
+              skipPreflight: false,
+              preflightCommitment: 'confirmed',
+              maxRetries: 1 // Let our own retry logic handle this
+            });
+            console.log('Transaction sent successfully, signature:', signature);
+          } catch (sendError) {
+            console.error('Failed to send transaction:', sendError);
+            
+            // Handle specific send errors
+            if (sendError.message.includes('already been processed')) {
+              console.log('Transaction already processed, checking status...');
+              // Try to get the signature from the error or use a previous one
+              if (signature) {
+                confirmed = true;
+                break;
+              }
+            }
+            
+            throw new Error(`Failed to send transaction: ${sendError.message}`);
+          }
           
-          console.log('Transaction sent, signature:', signature);
-          
-          // Use the more robust confirmTransaction with blockhash strategy
+          // Confirm transaction with timeout protection
           console.log('Waiting for transaction confirmation...');
           
           try {
-            const confirmation = await connection.confirmTransaction({
+            // Use Promise.race to add our own timeout
+            const confirmationPromise = connection.confirmTransaction({
               signature,
               blockhash,
               lastValidBlockHeight
             }, 'confirmed');
+            
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Confirmation timeout')), 30000)
+            );
+            
+            const confirmation = await Promise.race([confirmationPromise, timeoutPromise]);
             
             if (confirmation.value.err) {
               throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
@@ -253,43 +360,56 @@ const CreateToken = () => {
             console.error('Confirmation error:', confirmError.message);
             
             // Check if transaction was actually successful despite timeout
-            if (confirmError.name === 'TransactionExpiredTimeoutError' ||
+            if (confirmError.message.includes('timeout') ||
+                confirmError.name === 'TransactionExpiredTimeoutError' ||
                 confirmError.message.includes('was not confirmed')) {
               
-              console.log('Checking transaction status manually...');
+              console.log('Confirmation timed out, checking transaction status manually...');
               
               // Wait a bit for the transaction to potentially settle
-              await new Promise(resolve => setTimeout(resolve, 3000));
+              await new Promise(resolve => setTimeout(resolve, 5000));
               
               try {
-                // Check if the transaction actually succeeded by looking at the signature status
+                // Check if the transaction actually succeeded
                 const signatureStatus = await connection.getSignatureStatus(signature, {
                   searchTransactionHistory: true
                 });
                 
-                if (signatureStatus.value && signatureStatus.value.confirmationStatus) {
-                  console.log('Transaction found with status:', signatureStatus.value.confirmationStatus);
-                  
+                console.log('Signature status check result:', signatureStatus);
+                
+                if (signatureStatus.value) {
                   if (signatureStatus.value.err) {
                     throw new Error(`Transaction failed: ${JSON.stringify(signatureStatus.value.err)}`);
                   }
                   
-                  // Transaction succeeded despite timeout
-                  console.log('Transaction succeeded despite confirmation timeout');
-                  confirmed = true;
-                  break;
+                  if (signatureStatus.value.confirmationStatus) {
+                    console.log('Transaction found with status:', signatureStatus.value.confirmationStatus);
+                    confirmed = true;
+                    break;
+                  }
                 }
+                
+                // If no status found, continue with retry
+                console.log('No transaction status found, will retry');
+                
               } catch (statusError) {
                 console.error('Error checking signature status:', statusError.message);
               }
             }
             
-            throw confirmError;
+            // If this was the last retry, throw the error
+            if (retries === 1) {
+              throw confirmError;
+            }
           }
           
         } catch (err) {
           retries--;
-          console.error(`Transaction attempt failed, retries left: ${retries}`, err.message);
+          console.error(`Transaction attempt failed, retries left: ${retries}`, {
+            message: err.message,
+            name: err.name,
+            code: err.code
+          });
           
           // Handle specific error cases
           if (err.message.includes('already been processed') ||
@@ -304,22 +424,21 @@ const CreateToken = () => {
             console.log('Blockhash expired, will retry with fresh blockhash');
           }
           
-          // If we're out of retries, throw the error
+          // If we're out of retries, provide helpful error message
           if (retries === 0) {
-            // For timeout errors, provide a more helpful message
-            if (err.name === 'TransactionExpiredTimeoutError' ||
-                err.message.includes('was not confirmed')) {
+            if (signature) {
               throw new Error(
                 `Transaction may have succeeded but confirmation timed out. ` +
-                `Please check the transaction signature ${signature} on Solana Explorer. ` +
-                `If the transaction succeeded, your token was created successfully.`
+                `Transaction signature: ${signature}. ` +
+                `Please check on Solana Explorer to verify if your token was created.`
               );
+            } else {
+              throw new Error(`Failed to create token: ${err.message}`);
             }
-            throw err;
           }
           
           // Wait before retrying with exponential backoff
-          const delay = (4 - retries) * 3000; // Increased delay
+          const delay = (4 - retries) * 2000;
           console.log(`Waiting ${delay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
@@ -327,6 +446,10 @@ const CreateToken = () => {
       
       if (!confirmed && !signature) {
         throw new Error('Failed to send transaction after multiple attempts');
+      }
+      
+      if (!signature) {
+        throw new Error('Transaction was processed but no signature was returned');
       }
 
       const explorerUrl = network === 'mainnet-beta'

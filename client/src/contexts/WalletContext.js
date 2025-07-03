@@ -158,52 +158,216 @@ const InnerWalletProvider = ({ children, network, setNetwork }) => {
     }
   };
 
-  // Get the current wallet adapter from @solana/wallet-adapter-react
+  // Enhanced wallet detection and connection management
   useEffect(() => {
-    // This function will run when the component mounts
+    let eventListenersAdded = false;
+    let checkInterval;
+    
     const checkWalletConnection = async () => {
       try {
-        // Check if window.solana exists (Phantom wallet)
+        console.log('Checking wallet connection...');
+        
+        // Wait for wallet extensions to load
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Check for Phantom wallet first (most common)
         if (window.solana?.isPhantom) {
+          console.log('Phantom wallet detected');
           setWallet(window.solana);
           
           // Check if already connected
-          const connected = window.solana.isConnected;
-          setConnected(connected);
+          const isConnected = window.solana.isConnected;
+          console.log('Phantom wallet connected status:', isConnected);
           
-          if (connected && window.solana.publicKey) {
-            setPublicKey(window.solana.publicKey);
-            await getWalletBalance(window.solana.publicKey.toString());
-          }
-          
-          // Listen for connection changes
-          window.solana.on('connect', (publicKey) => {
-            console.log('Phantom wallet connected:', publicKey);
+          if (isConnected && window.solana.publicKey) {
+            console.log('Phantom wallet public key:', window.solana.publicKey.toString());
             setConnected(true);
-            setPublicKey(publicKey);
-          });
-          
-          window.solana.on('disconnect', () => {
-            console.log('Phantom wallet disconnected');
+            setPublicKey(window.solana.publicKey);
+            
+            // Get balance in background
+            try {
+              await getWalletBalance(window.solana.publicKey.toString());
+            } catch (balanceError) {
+              console.warn('Failed to get initial balance:', balanceError);
+            }
+          } else {
             setConnected(false);
             setPublicKey(null);
-          });
+            setWalletBalance(0);
+          }
+          
+          // Add event listeners only once
+          if (!eventListenersAdded) {
+            console.log('Adding Phantom wallet event listeners...');
+            
+            const handleConnect = async (publicKey) => {
+              console.log('Phantom wallet connected event:', publicKey?.toString());
+              setConnected(true);
+              setPublicKey(publicKey);
+              
+              if (publicKey) {
+                try {
+                  await getWalletBalance(publicKey.toString());
+                } catch (error) {
+                  console.warn('Failed to get balance on connect:', error);
+                }
+              }
+            };
+            
+            const handleDisconnect = () => {
+              console.log('Phantom wallet disconnected event');
+              setConnected(false);
+              setPublicKey(null);
+              setWalletBalance(0);
+            };
+            
+            const handleAccountChanged = async (publicKey) => {
+              console.log('Phantom wallet account changed:', publicKey?.toString());
+              if (publicKey) {
+                setPublicKey(publicKey);
+                setConnected(true);
+                try {
+                  await getWalletBalance(publicKey.toString());
+                } catch (error) {
+                  console.warn('Failed to get balance on account change:', error);
+                }
+              } else {
+                setConnected(false);
+                setPublicKey(null);
+                setWalletBalance(0);
+              }
+            };
+            
+            // Add event listeners with error handling
+            try {
+              window.solana.on('connect', handleConnect);
+              window.solana.on('disconnect', handleDisconnect);
+              window.solana.on('accountChanged', handleAccountChanged);
+              eventListenersAdded = true;
+              console.log('Phantom wallet event listeners added successfully');
+            } catch (listenerError) {
+              console.error('Failed to add Phantom wallet event listeners:', listenerError);
+            }
+          }
+          
+          return true; // Phantom wallet found
         }
+        
+        // Check for other wallets if Phantom is not available
+        console.log('Phantom wallet not detected, checking for other wallets...');
+        
+        // Check for Solflare
+        if (window.solflare?.isConnected) {
+          console.log('Solflare wallet detected and connected');
+          setWallet(window.solflare);
+          setConnected(true);
+          setPublicKey(window.solflare.publicKey);
+          
+          try {
+            await getWalletBalance(window.solflare.publicKey.toString());
+          } catch (error) {
+            console.warn('Failed to get Solflare balance:', error);
+          }
+          return true;
+        }
+        
+        // Check for Backpack
+        if (window.backpack?.isConnected) {
+          console.log('Backpack wallet detected and connected');
+          setWallet(window.backpack);
+          setConnected(true);
+          setPublicKey(window.backpack.publicKey);
+          
+          try {
+            await getWalletBalance(window.backpack.publicKey.toString());
+          } catch (error) {
+            console.warn('Failed to get Backpack balance:', error);
+          }
+          return true;
+        }
+        
+        // Check for other wallet providers
+        const walletProviders = ['sollet', 'mathWallet', 'coin98', 'slope'];
+        for (const provider of walletProviders) {
+          if (window[provider]?.isConnected) {
+            console.log(`${provider} wallet detected and connected`);
+            setWallet(window[provider]);
+            setConnected(true);
+            setPublicKey(window[provider].publicKey);
+            return true;
+          }
+        }
+        
+        console.log('No wallet detected or connected');
+        return false;
+        
       } catch (error) {
         console.error('Error checking wallet connection:', error);
+        return false;
       }
     };
     
-    checkWalletConnection();
+    // Initial check with multiple attempts
+    const performInitialCheck = async () => {
+      let attempts = 0;
+      const maxAttempts = 5;
+      
+      while (attempts < maxAttempts) {
+        console.log(`Wallet detection attempt ${attempts + 1}/${maxAttempts}`);
+        
+        const walletFound = await checkWalletConnection();
+        
+        if (walletFound) {
+          console.log('Wallet found, stopping detection attempts');
+          break;
+        }
+        
+        attempts++;
+        
+        if (attempts < maxAttempts) {
+          // Wait before next attempt with increasing delay
+          const delay = 1000 + (attempts * 500);
+          console.log(`Waiting ${delay}ms before next wallet detection attempt...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+      
+      if (attempts === maxAttempts) {
+        console.log('Wallet detection completed after maximum attempts');
+      }
+    };
+    
+    // Start initial detection
+    performInitialCheck();
+    
+    // Set up periodic checks for wallet availability (less frequent)
+    checkInterval = setInterval(async () => {
+      // Only check if no wallet is currently connected
+      if (!connected && !wallet) {
+        console.log('Periodic wallet availability check...');
+        await checkWalletConnection();
+      }
+    }, 10000); // Check every 10 seconds
     
     // Cleanup function
     return () => {
-      if (window.solana?.isPhantom) {
-        window.solana.off('connect');
-        window.solana.off('disconnect');
+      if (checkInterval) {
+        clearInterval(checkInterval);
+      }
+      
+      // Clean up event listeners
+      if (eventListenersAdded && window.solana?.isPhantom) {
+        try {
+          console.log('Cleaning up Phantom wallet event listeners...');
+          window.solana.off('connect');
+          window.solana.off('disconnect');
+          window.solana.off('accountChanged');
+        } catch (error) {
+          console.warn('Error cleaning up wallet event listeners:', error);
+        }
       }
     };
-  }, []);
+  }, []); // Empty dependency array - only run once on mount
 
   // Context value
   const value = {
