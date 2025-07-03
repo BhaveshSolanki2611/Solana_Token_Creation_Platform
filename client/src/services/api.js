@@ -41,29 +41,66 @@ api.interceptors.response.use(
   error => {
     // Handle network errors or server errors
     if (!error.response) {
-      console.error('Network Error:', error);
+      console.error('Network Error - Full Details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+        config: error.config
+      });
       return Promise.reject(new Error('Network error. Please check your connection.'));
     }
     
-    // Log error details
-    console.error('API Error:', {
+    // Log comprehensive error details to prevent truncation
+    console.error('API Error - Full Details:', {
       status: error.response.status,
       statusText: error.response.statusText,
       url: error.config?.url,
-      method: error.config?.method,
-      data: error.response.data
+      method: error.config?.method?.toUpperCase(),
+      headers: error.response.headers,
+      data: error.response.data,
+      message: error.message,
+      code: error.code,
+      stack: error.stack
     });
     
-    // Handle specific error cases
+    // Extract error message from response data
+    let errorMessage = 'An error occurred';
+    
+    if (error.response.data) {
+      if (typeof error.response.data === 'string') {
+        errorMessage = error.response.data;
+      } else if (error.response.data.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response.data.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.response.data.details) {
+        errorMessage = error.response.data.details;
+      }
+    }
+    
+    // Handle specific error cases with detailed messages
     if (error.response.status === 408) {
-      return Promise.reject(new Error('Request timeout. Please try again.'));
+      errorMessage = 'Request timeout. Please try again.';
+    } else if (error.response.status === 429) {
+      errorMessage = 'Too many requests. Please wait a moment and try again.';
+    } else if (error.response.status === 400) {
+      errorMessage = error.response.data?.error || 'Invalid request. Please check your input.';
+    } else if (error.response.status === 404) {
+      errorMessage = error.response.data?.error || 'Resource not found.';
+    } else if (error.response.status >= 500) {
+      errorMessage = error.response.data?.error || 'Server error. Please try again later.';
     }
     
-    if (error.response.status >= 500) {
-      return Promise.reject(new Error('Server error. Please try again later.'));
-    }
+    // Create enhanced error object with full details
+    const enhancedError = new Error(errorMessage);
+    enhancedError.status = error.response.status;
+    enhancedError.statusText = error.response.statusText;
+    enhancedError.data = error.response.data;
+    enhancedError.code = error.code;
+    enhancedError.config = error.config;
+    enhancedError.response = error.response;
     
-    return Promise.reject(error);
+    return Promise.reject(enhancedError);
   }
 );
 

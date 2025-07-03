@@ -73,80 +73,8 @@ router.post(
       const preparedData = await prepareCreateTokenTransaction({ ...req.body, network }, connection);
       console.log('Token transaction prepared successfully:', preparedData.mintAddress);
 
-      // Database operations using safe wrapper - run in background
-      const dbOperations = async () => {
-        try {
-          // Save token metadata
-          await safeDbOperation(async () => {
-            const tokenDoc = new Token({
-              mint: preparedData.mintAddress,
-              name: req.body.name,
-              symbol: req.body.symbol,
-              decimals: req.body.decimals,
-              supply: req.body.supply.toString(), // Ensure string format
-              owner: req.body.ownerWallet,
-              network: network,
-              mintAuthority: req.body.mintAuthority || req.body.ownerWallet,
-              freezeAuthority: req.body.freezeAuthority || null,
-              description: req.body.description || '',
-              image: req.body.image || '',
-              website: req.body.website || '',
-              twitter: req.body.twitter || '',
-              telegram: req.body.telegram || '',
-              discord: req.body.discord || '',
-            });
-            return await tokenDoc.save();
-          }, null);
-
-          // Save user if not present - with better error handling
-          if (req.body.ownerWallet) {
-            await safeDbOperation(async () => {
-              return await User.updateOne(
-                { wallet: req.body.ownerWallet },
-                {
-                  $setOnInsert: {
-                    wallet: req.body.ownerWallet,
-                    createdAt: new Date()
-                  }
-                },
-                { upsert: true, timeout: 5000 }
-              );
-            }, null);
-          }
-
-          // Log creation event
-          await safeDbOperation(async () => {
-            return await TransactionLog.create({
-              type: 'mint',
-              mint: preparedData.mintAddress,
-              from: null,
-              to: req.body.ownerWallet,
-              amount: (req.body.supply * Math.pow(10, req.body.decimals)).toString(),
-              decimals: req.body.decimals,
-              txSignature: null,
-              meta: {
-                event: 'create',
-                tokenName: req.body.name,
-                tokenSymbol: req.body.symbol,
-                network: network
-              },
-              network: network,
-            });
-          }, null);
-          
-          console.log('Database operations completed successfully');
-        } catch (error) {
-          console.error('Database operations failed:', error.message);
-          // Don't throw - these are background operations
-        }
-      };
-
-      // Run database operations in background, don't wait for them
-      dbOperations().catch(err => {
-        console.error('Background database operations failed:', err.message);
-      });
-
-      // Return the prepared transaction data immediately
+      // Return the prepared transaction data immediately - NO DATABASE OPERATIONS
+      // Database operations will be handled after successful transaction confirmation
       res.json(preparedData);
     } catch (error) {
       console.error('Error preparing token creation - Full error:', error);
@@ -186,6 +114,121 @@ router.post(
 );
 
 /**
+ * @route   POST api/tokens/save-metadata
+ * @desc    Save token metadata after successful transaction confirmation
+ * @access  Public
+ */
+router.post('/save-metadata', async (req, res) => {
+  try {
+    const {
+      mintAddress,
+      name,
+      symbol,
+      decimals,
+      supply,
+      ownerWallet,
+      network = 'devnet',
+      mintAuthority,
+      freezeAuthority,
+      description,
+      image,
+      website,
+      twitter,
+      telegram,
+      discord,
+      txSignature
+    } = req.body;
+
+    console.log('Saving token metadata for:', mintAddress);
+
+    // Validate required fields
+    if (!mintAddress || !name || !symbol || !ownerWallet) {
+      return res.status(400).json({
+        error: 'Missing required fields: mintAddress, name, symbol, ownerWallet'
+      });
+    }
+
+    // Save token metadata (non-blocking)
+    const tokenSaved = await safeDbOperation(async () => {
+      const tokenDoc = new Token({
+        mint: mintAddress,
+        name,
+        symbol,
+        decimals: parseInt(decimals) || 9,
+        supply: supply.toString(),
+        owner: ownerWallet,
+        network,
+        mintAuthority: mintAuthority || ownerWallet,
+        freezeAuthority: freezeAuthority || null,
+        description: description || '',
+        image: image || '',
+        website: website || '',
+        twitter: twitter || '',
+        telegram: telegram || '',
+        discord: discord || '',
+      });
+      return await tokenDoc.save();
+    }, null);
+
+    // Save user (non-blocking)
+    const userSaved = await safeDbOperation(async () => {
+      return await User.updateOne(
+        { wallet: ownerWallet },
+        {
+          $setOnInsert: {
+            wallet: ownerWallet,
+            createdAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+    }, null);
+
+    // Log creation event (non-blocking)
+    const logSaved = await safeDbOperation(async () => {
+      return await TransactionLog.create({
+        type: 'mint',
+        mint: mintAddress,
+        from: null,
+        to: ownerWallet,
+        amount: (parseFloat(supply) * Math.pow(10, parseInt(decimals) || 9)).toString(),
+        decimals: parseInt(decimals) || 9,
+        txSignature: txSignature || null,
+        meta: {
+          event: 'create',
+          tokenName: name,
+          tokenSymbol: symbol,
+          network
+        },
+        network,
+      });
+    }, null);
+
+    console.log('Token metadata save results:', {
+      tokenSaved: !!tokenSaved,
+      userSaved: !!userSaved,
+      logSaved: !!logSaved
+    });
+
+    res.json({
+      success: true,
+      saved: {
+        token: !!tokenSaved,
+        user: !!userSaved,
+        log: !!logSaved
+      }
+    });
+
+  } catch (error) {
+    console.error('Error saving token metadata:', error);
+    res.status(500).json({
+      error: 'Failed to save token metadata',
+      details: error.message
+    });
+  }
+});
+
+/**
  * @route   GET api/tokens/:address
  * @desc    Get token information by address
  * @access  Public
@@ -193,49 +236,129 @@ router.post(
 router.get('/:address', async (req, res) => {
   try {
     const { network = 'devnet' } = req.query;
-    const tokenInfo = await getTokenInfo(req.params.address, network);
-    if (!tokenInfo) {
-      // If tokenInfo is null, it means the token was not found.
-      return res.status(404).json({ error: 'Token not found' });
+    const tokenAddress = req.params.address;
+    
+    console.log(`Fetching token info for: ${tokenAddress} on network: ${network}`);
+    
+    // Validate token address format
+    if (!tokenAddress || tokenAddress.length < 32 || tokenAddress.length > 44) {
+      return res.status(400).json({ error: 'Invalid token address format' });
     }
-    // Try to get metadata from MongoDB using safe operation
+    
+    // Get token info from Solana network with timeout protection
+    let tokenInfo;
+    try {
+      const tokenInfoPromise = getTokenInfo(tokenAddress, network);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Token info fetch timeout')), 25000)
+      );
+      
+      tokenInfo = await Promise.race([tokenInfoPromise, timeoutPromise]);
+      
+      if (!tokenInfo) {
+        console.log(`Token not found on network: ${tokenAddress}`);
+        return res.status(404).json({ error: 'Token not found on the blockchain' });
+      }
+      
+      console.log(`Token info fetched successfully: ${tokenAddress}`);
+    } catch (tokenError) {
+      console.error(`Error fetching token from blockchain: ${tokenAddress}`, tokenError.message);
+      
+      // Handle specific blockchain errors
+      if (tokenError.message.includes('Invalid public key') ||
+          tokenError.message.includes('invalid') ||
+          tokenError.message.includes('not found')) {
+        return res.status(404).json({ error: 'Token not found or invalid address' });
+      }
+      
+      if (tokenError.message.includes('429') || tokenError.message.includes('rate limit')) {
+        return res.status(429).json({
+          error: 'Rate limit exceeded. Please try again in a moment.'
+        });
+      }
+      
+      if (tokenError.message.includes('timeout')) {
+        return res.status(408).json({
+          error: 'Request timeout. Please try again.'
+        });
+      }
+      
+      // For other errors, return a generic error but still try to get DB metadata
+      console.warn(`Blockchain fetch failed, trying database only: ${tokenError.message}`);
+      tokenInfo = {
+        address: tokenAddress,
+        decimals: 9, // Default decimals
+        supply: '0',
+        mintAuthority: null,
+        freezeAuthority: null,
+        isInitialized: true,
+        holders: 0,
+        largestAccounts: []
+      };
+    }
+    
+    // Try to get metadata from MongoDB using safe operation (non-blocking)
     const dbMeta = await safeDbOperation(async () => {
-      return await Token.findOne({ mint: req.params.address }).lean();
-    });
-    // Merge dbMeta into tokenInfo, preferring on-chain for supply/decimals, dbMeta for name/symbol/description
+      return await Token.findOne({ mint: tokenAddress }).lean();
+    }, null);
+    
+    console.log(`Database metadata ${dbMeta ? 'found' : 'not found'} for: ${tokenAddress}`);
+    
+    // Merge database metadata with blockchain data
     const merged = {
-      ...dbMeta,
       ...tokenInfo,
-      name: dbMeta?.name || tokenInfo.name || 'Unnamed Token',
-      symbol: dbMeta?.symbol || tokenInfo.symbol || '',
+      // Prefer database metadata for display information
+      name: dbMeta?.name || tokenInfo.name || 'Unknown Token',
+      symbol: dbMeta?.symbol || tokenInfo.symbol || 'UNKNOWN',
       description: dbMeta?.description || '',
       image: dbMeta?.image || '',
       website: dbMeta?.website || '',
       twitter: dbMeta?.twitter || '',
       telegram: dbMeta?.telegram || '',
       discord: dbMeta?.discord || '',
+      // Always prefer blockchain data for critical information
+      address: tokenAddress,
+      decimals: tokenInfo.decimals,
+      supply: tokenInfo.supply,
+      mintAuthority: tokenInfo.mintAuthority,
+      freezeAuthority: tokenInfo.freezeAuthority,
+      isInitialized: tokenInfo.isInitialized
     };
+    
+    console.log(`Returning merged token data for: ${tokenAddress}`);
     res.json(merged);
+    
   } catch (error) {
-    console.error('Error fetching token info:', error);
+    console.error('Error in token info endpoint:', {
+      address: req.params.address,
+      network: req.query.network,
+      error: error.message,
+      stack: error.stack
+    });
     
-    // Handle specific error types
-    if (error.message && error.message.includes('429')) {
-      return res.status(429).json({ 
-        error: 'Too many requests to the Solana network. Please try again in a moment.' 
-      });
+    // Provide detailed error response
+    let errorMessage = 'Failed to fetch token information';
+    let statusCode = 500;
+    
+    if (error.message.includes('Invalid token address')) {
+      errorMessage = 'Invalid token address format';
+      statusCode = 400;
+    } else if (error.message.includes('Token not found')) {
+      errorMessage = 'Token not found';
+      statusCode = 404;
+    } else if (error.message.includes('429') || error.message.includes('rate limit')) {
+      errorMessage = 'Too many requests. Please try again in a moment.';
+      statusCode = 429;
+    } else if (error.message.includes('timeout')) {
+      errorMessage = 'Request timeout. Please try again.';
+      statusCode = 408;
     }
     
-    if (error.message && error.message.includes('Invalid public key')) {
-      return res.status(400).json({ error: 'Invalid token address format' });
-    }
-    
-    if (error.message && error.message.includes('not found')) {
-      return res.status(404).json({ error: 'Token not found' });
-    }
-    
-    // Generic server error
-    res.status(500).json({ error: 'Server error while fetching token information. Please try again later.' });
+    res.status(statusCode).json({
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
@@ -247,30 +370,99 @@ router.get('/:address', async (req, res) => {
 router.get('/owner/:address', async (req, res) => {
   try {
     const { network = 'devnet' } = req.query;
+    const ownerAddress = req.params.address;
+    
+    console.log(`Fetching token accounts for owner: ${ownerAddress} on network: ${network}`);
     
     // Validate wallet address format
-    if (!req.params.address || req.params.address.length !== 44) {
+    if (!ownerAddress || ownerAddress.length < 32 || ownerAddress.length > 44) {
       return res.status(400).json({ error: 'Invalid wallet address format' });
     }
     
-    const tokenAccounts = await getTokenAccountsByOwner(req.params.address, network);
-    res.json({ tokens: tokenAccounts });
+    // Get token accounts with timeout protection
+    let tokenAccounts = [];
+    try {
+      const tokenAccountsPromise = getTokenAccountsByOwner(ownerAddress, network);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Token accounts fetch timeout')), 30000)
+      );
+      
+      tokenAccounts = await Promise.race([tokenAccountsPromise, timeoutPromise]);
+      console.log(`Found ${tokenAccounts.length} token accounts for owner: ${ownerAddress}`);
+      
+    } catch (fetchError) {
+      console.error(`Error fetching token accounts for ${ownerAddress}:`, fetchError.message);
+      
+      // Handle specific errors but don't fail completely
+      if (fetchError.message.includes('Invalid public key')) {
+        return res.status(400).json({ error: 'Invalid wallet address format' });
+      }
+      
+      if (fetchError.message.includes('429') || fetchError.message.includes('rate limit')) {
+        return res.status(429).json({
+          error: 'Rate limit exceeded. Please try again in a moment.'
+        });
+      }
+      
+      if (fetchError.message.includes('timeout')) {
+        console.warn(`Token accounts fetch timeout for ${ownerAddress}, returning empty array`);
+        tokenAccounts = []; // Return empty array instead of failing
+      } else {
+        // For other errors, log but return empty array to avoid breaking the UI
+        console.warn(`Token accounts fetch failed for ${ownerAddress}, returning empty array:`, fetchError.message);
+        tokenAccounts = [];
+      }
+    }
+    
+    // Filter out invalid token accounts
+    const validTokenAccounts = tokenAccounts.filter(account =>
+      account &&
+      account.mint &&
+      account.mint.length >= 32 &&
+      account.amount !== undefined
+    );
+    
+    console.log(`Returning ${validTokenAccounts.length} valid token accounts for owner: ${ownerAddress}`);
+    
+    res.json({
+      tokens: validTokenAccounts,
+      total: validTokenAccounts.length,
+      owner: ownerAddress,
+      network: network
+    });
+    
   } catch (error) {
-    console.error('Error fetching token accounts:', error);
+    console.error('Error in token accounts endpoint:', {
+      owner: req.params.address,
+      network: req.query.network,
+      error: error.message,
+      stack: error.stack
+    });
     
-    // Handle specific error types
-    if (error.message && error.message.includes('429')) {
-      return res.status(429).json({ 
-        error: 'Too many requests to the Solana network. Please try again in a moment.' 
-      });
+    // Provide detailed error response
+    let errorMessage = 'Failed to fetch token accounts';
+    let statusCode = 500;
+    
+    if (error.message.includes('Invalid wallet address')) {
+      errorMessage = 'Invalid wallet address format';
+      statusCode = 400;
+    } else if (error.message.includes('429') || error.message.includes('rate limit')) {
+      errorMessage = 'Too many requests. Please try again in a moment.';
+      statusCode = 429;
+    } else if (error.message.includes('timeout')) {
+      errorMessage = 'Request timeout. Please try again.';
+      statusCode = 408;
     }
     
-    if (error.message && error.message.includes('Invalid public key')) {
-      return res.status(400).json({ error: 'Invalid wallet address' });
-    }
-    
-    // Generic server error
-    res.status(500).json({ error: 'Server error while fetching token accounts. Please try again later.' });
+    res.status(statusCode).json({
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      tokens: [], // Always provide empty array as fallback
+      total: 0,
+      owner: req.params.address,
+      network: req.query.network || 'devnet',
+      timestamp: new Date().toISOString()
+    });
   }
 });
 

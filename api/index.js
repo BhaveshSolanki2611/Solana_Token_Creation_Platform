@@ -13,10 +13,25 @@ const app = express();
 // Middleware to ensure database connection (MUST be first)
 app.use(async (req, res, next) => {
   try {
-    await connectToDatabase();
+    // Only attempt database connection for non-critical paths
+    // Skip database connection for token creation critical path
+    if (req.path === '/api/tokens' && req.method === 'POST') {
+      console.log('Skipping database connection for token creation');
+      return next();
+    }
+    
+    // For other endpoints, attempt connection with timeout
+    const connectionPromise = connectToDatabase();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Database connection timeout')), 5000)
+    );
+    
+    await Promise.race([connectionPromise, timeoutPromise]);
+    console.log('Database connection established for:', req.path);
   } catch (error) {
-    console.error('Database connection middleware error:', error);
-    // Don't fail the request, just log the error
+    console.warn('Database connection middleware warning:', error.message);
+    // Don't fail the request, just log the warning
+    // Application will work without database for critical operations
   }
   next();
 });

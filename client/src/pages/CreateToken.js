@@ -342,7 +342,37 @@ const CreateToken = () => {
       
       console.log('Token creation completed successfully');
 
-      // 9. Navigate to the new token's page after a delay
+      // 9. Save token metadata to database (non-blocking)
+      try {
+        console.log('Saving token metadata...');
+        const metadataResponse = await axios.post('/api/tokens/save-metadata', {
+          mintAddress,
+          name: tokenData.name,
+          symbol: tokenData.symbol,
+          decimals: tokenData.decimals,
+          supply: tokenData.supply,
+          ownerWallet: publicKey.toString(),
+          network,
+          mintAuthority: tokenData.mintAuthority || publicKey.toString(),
+          freezeAuthority: tokenData.freezeAuthority || null,
+          description: tokenData.description,
+          image: tokenData.image,
+          website: tokenData.website,
+          twitter: tokenData.twitter,
+          telegram: tokenData.telegram,
+          discord: tokenData.discord,
+          txSignature: signature
+        }, {
+          timeout: 10000 // Short timeout for metadata save
+        });
+        
+        console.log('Token metadata saved:', metadataResponse.data);
+      } catch (metadataError) {
+        console.warn('Failed to save token metadata (non-critical):', metadataError.message);
+        // Don't fail the entire process if metadata save fails
+      }
+
+      // 10. Navigate to the new token's page after a delay
       setTimeout(() => {
         navigate(`/token/${mintAddress}`);
       }, 3000);

@@ -244,37 +244,119 @@ const TokenDashboard = () => {
     setError('');
 
     try {
-      const response = await axios.get(`/api/tokens/owner/${publicKey.toString()}?network=${network}`);
+      console.log(`Fetching tokens for owner: ${publicKey.toString()} on network: ${network}`);
+      
+      const response = await axios.get(`/api/tokens/owner/${publicKey.toString()}?network=${network}`, {
+        timeout: 30000, // 30 second timeout
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('Token accounts response:', response.status, response.data);
       const tokens = response.data.tokens || [];
+      console.log(`Found ${tokens.length} token accounts`);
 
-      // Fetch mint info for each token
-      const tokensWithMintInfo = await Promise.all(tokens.map(async (token) => {
-        if (!token.mint || token.mint.length < 32) return null; // skip invalid
+      if (tokens.length === 0) {
+        console.log('No tokens found for this wallet');
+        setTokens([]);
+        setFilteredTokens([]);
+        return;
+      }
+
+      // Fetch mint info for each token with better error handling
+      const tokensWithMintInfo = await Promise.allSettled(tokens.map(async (token) => {
+        if (!token.mint || token.mint.length < 32) {
+          console.warn('Skipping invalid token:', token);
+          return null;
+        }
         
         // Check cache first
         const cacheKey = `${token.mint}-${network}`;
         const cached = tokenCache.get(cacheKey);
         if (cached && (Date.now() - cached.timestamp < CACHE_EXPIRATION)) {
+          console.log(`Using cached data for: ${token.mint}`);
           return { ...token, ...cached.data, address: token.mint, balance: token.amount };
         }
 
         try {
-          const mintInfoRes = await axios.get(`/api/tokens/${token.mint}?network=${network}`);
-          const mergedToken = { ...token, ...mintInfoRes.data, address: token.mint, balance: token.amount };
-          tokenCache.set(cacheKey, { data: mergedToken, timestamp: Date.now() });
-          return mergedToken;
+          console.log(`Fetching mint info for: ${token.mint}`);
+          const mintInfoRes = await axios.get(`/api/tokens/${token.mint}?network=${network}`, {
+            timeout: 15000, // 15 second timeout
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (mintInfoRes.data) {
+            console.log(`Mint info fetched successfully for: ${token.mint}`);
+            const mergedToken = { ...token, ...mintInfoRes.data, address: token.mint, balance: token.amount };
+            tokenCache.set(cacheKey, { data: mergedToken, timestamp: Date.now() });
+            return mergedToken;
+          } else {
+            console.warn(`Empty response for mint info: ${token.mint}`);
+            return { ...token, address: token.mint, balance: token.amount };
+          }
         } catch (e) {
-          console.error(`Failed to fetch mint info for ${token.mint}`, e);
-          return { ...token, address: token.mint, balance: token.amount }; // fallback to basic info if fetch fails
+          console.error(`Failed to fetch mint info for ${token.mint}:`, {
+            message: e.message || 'Unknown error',
+            status: e.response?.status,
+            statusText: e.response?.statusText,
+            data: e.response?.data,
+            code: e.code
+          });
+          
+          // Return basic token info as fallback
+          return {
+            ...token,
+            address: token.mint,
+            balance: token.amount,
+            name: token.name || 'Unknown Token',
+            symbol: token.symbol || 'UNKNOWN',
+            decimals: token.decimals || 9
+          };
         }
       }));
 
-      const validTokens = tokensWithMintInfo.filter(Boolean);
+      // Process results from Promise.allSettled
+      const validTokens = tokensWithMintInfo
+        .filter(result => result.status === 'fulfilled' && result.value !== null)
+        .map(result => result.value);
+      
+      console.log(`Processed ${validTokens.length} valid tokens out of ${tokens.length} total`);
       setTokens(validTokens);
       setFilteredTokens(validTokens);
+      
     } catch (error) {
-      console.error('Error fetching tokens:', error);
-      setError('Failed to fetch tokens. Please try again.');
+      console.error('Error fetching tokens:', {
+        message: error.message || 'Unknown error',
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        code: error.code,
+        stack: error.stack
+      });
+      
+      let errorMessage = 'Failed to fetch tokens. Please try again.';
+      
+      if (error.response) {
+        const status = error.response.status;
+        if (status === 429) {
+          errorMessage = 'Too many requests. Please wait a moment and try again.';
+        } else if (status === 408) {
+          errorMessage = 'Request timeout. Please check your connection and try again.';
+        } else if (status === 500) {
+          errorMessage = 'Server error. Please try again in a moment.';
+        } else if (status === 400) {
+          errorMessage = 'Invalid wallet address. Please check your wallet connection.';
+        }
+      } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        errorMessage = 'Request timeout. Please check your connection and try again.';
+      } else if (error.code === 'NETWORK_ERROR' || error.message.includes('Network Error')) {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
