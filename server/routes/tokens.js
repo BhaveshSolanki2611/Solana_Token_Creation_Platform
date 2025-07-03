@@ -77,38 +77,83 @@ router.post(
       // Database operations will be handled after successful transaction confirmation
       res.json(preparedData);
     } catch (error) {
-      console.error('Error preparing token creation - Full error:', error);
-      console.error('Error stack:', error.stack);
-      console.error('Error name:', error.name);
-      console.error('Error message:', error.message);
+      const requestId = Math.random().toString(36).substring(7);
       
-      // Provide more specific error messages based on error type
-      let errorMessage = 'Failed to prepare token creation';
+      // Enhanced error logging with full context
+      console.error(`[${requestId}] Error preparing token creation:`, {
+        message: error.message || 'Unknown error',
+        stack: error.stack,
+        name: error.name,
+        code: error.code,
+        requestBody: {
+          name: req.body.name,
+          symbol: req.body.symbol,
+          network: req.body.network,
+          ownerWallet: req.body.ownerWallet
+        }
+      });
+      
+      // Provide comprehensive error messages to prevent truncation
+      let errorResponse = {
+        success: false,
+        error: 'Failed to prepare token creation',
+        message: error.message || 'Unknown error occurred',
+        details: error.message || 'No additional details available',
+        type: error.name || 'UnknownError',
+        code: error.code || 'UNKNOWN_ERROR',
+        requestId: requestId,
+        timestamp: new Date().toISOString()
+      };
+      
       let statusCode = 500;
       
-      if (error.message.includes('Invalid public key')) {
-        errorMessage = 'Invalid wallet address provided';
+      // Enhanced error classification with complete messages
+      if (error.message && error.message.includes('Invalid public key')) {
+        errorResponse.error = 'Invalid wallet address provided';
+        errorResponse.message = 'The wallet address format is invalid. Please check your wallet connection.';
+        errorResponse.details = `Invalid public key error: ${error.message}`;
         statusCode = 400;
-      } else if (error.message.includes('Network request failed') || error.message.includes('fetch')) {
-        errorMessage = 'Solana network connection failed';
+      } else if (error.message && (error.message.includes('Network request failed') || error.message.includes('fetch') || error.message.includes('ECONNREFUSED'))) {
+        errorResponse.error = 'Solana network connection failed';
+        errorResponse.message = 'Unable to connect to Solana RPC endpoint. Please try again.';
+        errorResponse.details = `Network error: ${error.message}`;
         statusCode = 503;
-      } else if (error.message.includes('Insufficient funds')) {
-        errorMessage = 'Insufficient SOL balance for token creation';
+      } else if (error.message && error.message.includes('Insufficient funds')) {
+        errorResponse.error = 'Insufficient SOL balance for token creation';
+        errorResponse.message = 'Your wallet does not have enough SOL to cover transaction fees.';
+        errorResponse.details = `Insufficient funds: ${error.message}`;
         statusCode = 400;
-      } else if (error.message.includes('timeout')) {
-        errorMessage = 'Request timeout - please try again';
+      } else if (error.message && (error.message.includes('timeout') || error.message.includes('ETIMEDOUT'))) {
+        errorResponse.error = 'Request timeout - Solana network is slow';
+        errorResponse.message = 'The request to Solana network timed out. Please try again.';
+        errorResponse.details = `Timeout error: ${error.message}`;
         statusCode = 408;
-      } else if (error.message.includes('validation')) {
-        errorMessage = 'Invalid input parameters';
+      } else if (error.message && error.message.includes('validation')) {
+        errorResponse.error = 'Invalid input parameters';
+        errorResponse.message = 'One or more input parameters are invalid.';
+        errorResponse.details = `Validation error: ${error.message}`;
         statusCode = 400;
+      } else if (error.message && error.message.includes('rate limit')) {
+        errorResponse.error = 'Rate limit exceeded';
+        errorResponse.message = 'Too many requests to Solana network. Please wait and try again.';
+        errorResponse.details = `Rate limit error: ${error.message}`;
+        statusCode = 429;
+      } else {
+        // Generic error with full message preservation
+        errorResponse.error = 'Token creation preparation failed';
+        errorResponse.message = error.message || 'An unexpected error occurred during token creation preparation.';
+        errorResponse.details = `Unexpected error: ${error.message || 'No error message available'}`;
       }
       
-      res.status(statusCode).json({
-        error: errorMessage,
-        details: error.message,
-        type: error.name || 'UnknownError',
-        timestamp: new Date().toISOString()
+      // Log the final error response for debugging
+      console.error(`[${requestId}] Sending error response:`, {
+        statusCode,
+        error: errorResponse.error,
+        message: errorResponse.message,
+        details: errorResponse.details
       });
+      
+      res.status(statusCode).json(errorResponse);
     }
   }
 );
