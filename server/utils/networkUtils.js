@@ -15,7 +15,9 @@ const getConnection = (network = 'devnet') => {
     'devnet': [
       'https://api.devnet.solana.com',
       'https://devnet.genesysgo.net/',
-      'https://devnet.rpcpool.com/'
+      'https://devnet.rpcpool.com/',
+      'https://mango.devnet.rpcpool.com',
+      'https://trashpandas.rpcpool.com'
     ],
     'testnet': [
       'https://api.testnet.solana.com',
@@ -24,7 +26,9 @@ const getConnection = (network = 'devnet') => {
     'mainnet-beta': [
       'https://api.mainnet-beta.solana.com',
       'https://solana-api.projectserum.com',
-      'https://rpc.ankr.com/solana'
+      'https://rpc.ankr.com/solana',
+      'https://solana-mainnet.g.alchemy.com/v2/demo',
+      'https://ssc-dao.genesysgo.net'
     ]
   };
   
@@ -43,13 +47,19 @@ const getConnection = (network = 'devnet') => {
   console.log(`Using RPC endpoint: ${endpoint}`);
   
   try {
-    // Create connection with higher commitment and increased timeouts
+    // Create connection with optimized parameters for better reliability
     const connection = new Connection(endpoint, {
       commitment: 'confirmed',
-      confirmTransactionInitialTimeout: 60000, // 60 seconds
+      confirmTransactionInitialTimeout: 30000, // Reduced to 30 seconds from 60
       disableRetryOnRateLimit: false,
-      httpAgent: false // Use default agent with keep-alive
+      httpAgent: false, // Use default agent with keep-alive
+      wsEndpoint: null, // Disable WebSocket for more reliable REST API usage
     });
+    
+    // Add custom properties to help with debugging
+    connection._customEndpoint = endpoint;
+    connection._customNetwork = network;
+    connection._createdAt = new Date().toISOString();
     
     console.log('Solana connection created successfully');
     return connection;
@@ -59,6 +69,29 @@ const getConnection = (network = 'devnet') => {
   }
 };
 
+// Utility function to test a connection's health
+const testConnectionHealth = async (connection) => {
+  try {
+    const startTime = Date.now();
+    const slot = await connection.getSlot('confirmed');
+    const elapsed = Date.now() - startTime;
+    
+    return {
+      healthy: true,
+      latency: elapsed,
+      endpoint: connection._customEndpoint,
+      slot: slot
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      error: error.message,
+      endpoint: connection._customEndpoint
+    };
+  }
+};
+
 module.exports = {
-  getConnection
+  getConnection,
+  testConnectionHealth
 }; 
