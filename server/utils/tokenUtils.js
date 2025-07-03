@@ -97,18 +97,33 @@ const prepareCreateTokenTransaction = async (tokenData, connection) => {
       throw new Error(`Invalid freeze authority address format: ${freezeAuthority}`);
     }
     
-    // Get rent exempt balance with retry logic
+    // Get rent exempt balance with enhanced retry logic
     console.log('Getting rent exempt balance for mint...');
     let rentExemptBalance;
     let retries = 3;
     while (retries > 0) {
       try {
-        // Test connection first
+        // Test connection first with timeout
         console.log('Testing connection to Solana RPC...');
-        const slot = await connection.getSlot();
+        const connectionTest = Promise.race([
+          connection.getSlot(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Connection test timeout')), 10000)
+          )
+        ]);
+        
+        const slot = await connectionTest;
         console.log('Connection successful, current slot:', slot);
         
-        rentExemptBalance = await getMinimumBalanceForRentExemptMint(connection);
+        // Get rent exempt balance with timeout
+        const rentPromise = Promise.race([
+          getMinimumBalanceForRentExemptMint(connection),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Rent exempt balance timeout')), 15000)
+          )
+        ]);
+        
+        rentExemptBalance = await rentPromise;
         console.log('Rent exempt balance obtained:', rentExemptBalance);
         break;
       } catch (error) {
@@ -126,9 +141,20 @@ const prepareCreateTokenTransaction = async (tokenData, connection) => {
           console.log('Trying with fallback connection...');
           try {
             const fallbackConnection = getConnection('devnet');
-            const testSlot = await fallbackConnection.getSlot();
+            const testSlot = await Promise.race([
+              fallbackConnection.getSlot(),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Fallback connection timeout')), 10000)
+              )
+            ]);
             console.log('Fallback connection successful, slot:', testSlot);
-            rentExemptBalance = await getMinimumBalanceForRentExemptMint(fallbackConnection);
+            
+            rentExemptBalance = await Promise.race([
+              getMinimumBalanceForRentExemptMint(fallbackConnection),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Fallback rent exempt timeout')), 15000)
+              )
+            ]);
             console.log('Rent exempt balance obtained with fallback:', rentExemptBalance);
             // Update connection reference for subsequent operations
             connection = fallbackConnection;
@@ -138,7 +164,11 @@ const prepareCreateTokenTransaction = async (tokenData, connection) => {
             throw new Error(`Failed to connect to Solana network after multiple attempts. Last error: ${error.message}`);
           }
         }
-        await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries))); // Exponential backoff
+        
+        // Exponential backoff with jitter
+        const delay = (2000 * (4 - retries)) + Math.random() * 1000;
+        console.log(`Waiting ${Math.round(delay)}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
     

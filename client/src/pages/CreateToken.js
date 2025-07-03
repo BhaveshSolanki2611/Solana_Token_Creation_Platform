@@ -204,75 +204,141 @@ const CreateToken = () => {
       const signedTx = await wallet.signTransaction(transaction);
       console.log('Transaction signed by wallet');
 
-      // 8. Send with retry logic
+      // 8. Send with enhanced retry logic and proper confirmation
       let signature;
       let retries = 3;
+      let confirmed = false;
       
-      while (retries > 0) {
+      while (retries > 0 && !confirmed) {
         try {
           console.log(`Sending transaction (attempt ${4 - retries}/3)...`);
           
-          // Get a fresh blockhash for each retry
-          if (retries < 3) {
-            console.log('Getting fresh blockhash for retry...');
-            const { blockhash: newBlockhash } = await connection.getLatestBlockhash('confirmed');
-            transaction.recentBlockhash = newBlockhash;
-            // Need to re-sign with new blockhash
-            transaction.partialSign(mintKeypair);
-            const newSignedTx = await wallet.signTransaction(transaction);
-            signature = await connection.sendRawTransaction(newSignedTx.serialize(), {
-              skipPreflight: false,
-              preflightCommitment: 'confirmed'
-            });
-          } else {
-            signature = await connection.sendRawTransaction(signedTx.serialize(), {
-              skipPreflight: false,
-              preflightCommitment: 'confirmed'
-            });
-          }
+          // Get a fresh blockhash for each attempt
+          console.log('Getting fresh blockhash...');
+          const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+          transaction.recentBlockhash = blockhash;
+          
+          // Re-sign with fresh blockhash
+          transaction.partialSign(mintKeypair);
+          const freshSignedTx = await wallet.signTransaction(transaction);
+          
+          // Send transaction with enhanced options
+          signature = await connection.sendRawTransaction(freshSignedTx.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+            maxRetries: 2
+          });
           
           console.log('Transaction sent, signature:', signature);
           
-          // Wait for confirmation with timeout
+          // Use the more robust confirmTransaction with blockhash strategy
           console.log('Waiting for transaction confirmation...');
-          const confirmationPromise = connection.confirmTransaction(signature, 'confirmed');
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Transaction confirmation timeout')), 60000)
-          );
           
-          const confirmation = await Promise.race([confirmationPromise, timeoutPromise]);
-          
-          if (confirmation.value.err) {
-            throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+          try {
+            const confirmation = await connection.confirmTransaction({
+              signature,
+              blockhash,
+              lastValidBlockHeight
+            }, 'confirmed');
+            
+            if (confirmation.value.err) {
+              throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+            }
+            
+            console.log('Transaction confirmed successfully');
+            confirmed = true;
+            break;
+            
+          } catch (confirmError) {
+            console.error('Confirmation error:', confirmError.message);
+            
+            // Check if transaction was actually successful despite timeout
+            if (confirmError.name === 'TransactionExpiredTimeoutError' ||
+                confirmError.message.includes('was not confirmed')) {
+              
+              console.log('Checking transaction status manually...');
+              
+              // Wait a bit for the transaction to potentially settle
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              
+              try {
+                // Check if the transaction actually succeeded by looking at the signature status
+                const signatureStatus = await connection.getSignatureStatus(signature, {
+                  searchTransactionHistory: true
+                });
+                
+                if (signatureStatus.value && signatureStatus.value.confirmationStatus) {
+                  console.log('Transaction found with status:', signatureStatus.value.confirmationStatus);
+                  
+                  if (signatureStatus.value.err) {
+                    throw new Error(`Transaction failed: ${JSON.stringify(signatureStatus.value.err)}`);
+                  }
+                  
+                  // Transaction succeeded despite timeout
+                  console.log('Transaction succeeded despite confirmation timeout');
+                  confirmed = true;
+                  break;
+                }
+              } catch (statusError) {
+                console.error('Error checking signature status:', statusError.message);
+              }
+            }
+            
+            throw confirmError;
           }
           
-          console.log('Transaction confirmed successfully');
-          // Success - break out of retry loop
-          break;
         } catch (err) {
           retries--;
           console.error(`Transaction attempt failed, retries left: ${retries}`, err.message);
           
-          // If it's already processed, consider it successful
-          if (err.message.includes('already been processed')) {
+          // Handle specific error cases
+          if (err.message.includes('already been processed') ||
+              err.message.includes('This transaction has already been processed')) {
             console.log('Transaction already processed, considering successful');
+            confirmed = true;
             break;
+          }
+          
+          if (err.message.includes('Blockhash not found') ||
+              err.message.includes('block height exceeded')) {
+            console.log('Blockhash expired, will retry with fresh blockhash');
           }
           
           // If we're out of retries, throw the error
           if (retries === 0) {
+            // For timeout errors, provide a more helpful message
+            if (err.name === 'TransactionExpiredTimeoutError' ||
+                err.message.includes('was not confirmed')) {
+              throw new Error(
+                `Transaction may have succeeded but confirmation timed out. ` +
+                `Please check the transaction signature ${signature} on Solana Explorer. ` +
+                `If the transaction succeeded, your token was created successfully.`
+              );
+            }
             throw err;
           }
           
           // Wait before retrying with exponential backoff
-          const delay = (4 - retries) * 2000;
+          const delay = (4 - retries) * 3000; // Increased delay
           console.log(`Waiting ${delay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
+      
+      if (!confirmed && !signature) {
+        throw new Error('Failed to send transaction after multiple attempts');
+      }
 
-      setSuccess(`Token created successfully! Signature: ${signature}`);
-      setCreatedToken({ tokenAddress: mintAddress });
+      const explorerUrl = network === 'mainnet-beta'
+        ? `https://explorer.solana.com/tx/${signature}`
+        : `https://explorer.solana.com/tx/${signature}?cluster=${network}`;
+      
+      setSuccess(
+        `Token created successfully! ` +
+        `Signature: ${signature}. ` +
+        `View on Solana Explorer: ${explorerUrl}`
+      );
+      setCreatedToken({ tokenAddress: mintAddress, signature, explorerUrl });
       
       console.log('Token creation completed successfully');
 
@@ -311,14 +377,25 @@ const CreateToken = () => {
       } else if (error.message) {
         // Other errors
         console.error('Other error:', error.message);
-        if (error.message.includes('timeout')) {
-          errorMessage = 'Request timed out. Please try again.';
+        if (error.message.includes('timeout') || error.name === 'TransactionExpiredTimeoutError') {
+          if (error.message.includes('check the transaction signature')) {
+            // This is our enhanced timeout message with signature
+            errorMessage = error.message;
+          } else {
+            errorMessage = 'Transaction confirmation timed out. The transaction may still succeed. Please check Solana Explorer with the transaction signature.';
+          }
         } else if (error.message.includes('Invalid response')) {
           errorMessage = 'Server returned invalid data. Please try again.';
         } else if (error.message.includes('User rejected')) {
           errorMessage = 'Transaction was rejected. Please try again.';
         } else if (error.message.includes('Insufficient funds')) {
           errorMessage = 'Insufficient SOL balance for transaction fees.';
+        } else if (error.message.includes('Blockhash not found')) {
+          errorMessage = 'Transaction expired. Please try again.';
+        } else if (error.message.includes('block height exceeded')) {
+          errorMessage = 'Transaction expired due to network congestion. Please try again.';
+        } else if (error.message.includes('already been processed')) {
+          errorMessage = 'Transaction was already processed. Your token may have been created successfully.';
         } else {
           errorMessage = error.message;
         }
@@ -327,6 +404,32 @@ const CreateToken = () => {
       setError(errorMessage);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Transaction status checker utility
+  const checkTransactionStatus = async (signature) => {
+    if (!signature) return null;
+    
+    try {
+      console.log('Checking transaction status for signature:', signature);
+      const status = await connection.getSignatureStatus(signature, {
+        searchTransactionHistory: true
+      });
+      
+      if (status.value) {
+        console.log('Transaction status found:', status.value);
+        return {
+          confirmed: !!status.value.confirmationStatus,
+          status: status.value.confirmationStatus,
+          error: status.value.err
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error checking transaction status:', error);
+      return null;
     }
   };
 
